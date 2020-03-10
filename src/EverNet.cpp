@@ -2,6 +2,7 @@
 // Driver definition for HopeRF RFM69W/RFM69HW/RFM69CW/RFM69HCW, Semtech SX1231/1231H
 // **********************************************************************************
 // Copyright LowPowerLab LLC 2018, https://www.LowPowerLab.com/contact
+// Modified by Daniel Dunn 
 // **********************************************************************************
 // License
 // **********************************************************************************
@@ -23,9 +24,13 @@
 // Please maintain this license information along with authorship
 // and copyright notices in any redistribution of this code
 // **********************************************************************************
-#include "RFM69.h"
+#include "EverNet.h"
 #include "RFM69registers.h"
+
 #include <SPI.h>
+
+void golay_block_encode(uint8_t * in, uint8_t * out);
+void golay_block_decode(uint8_t * in, uint8_t * out);
 
 uint8_t RFM69::DATA[RF69_MAX_DATA_LEN+1];
 uint8_t RFM69::_mode;        // current transceiver state
@@ -38,6 +43,9 @@ uint8_t RFM69::ACK_RECEIVED; // should be polled immediately after sending a pac
 int16_t RFM69::RSSI;          // most accurate RSSI during reception (closest to the reception)
 volatile bool RFM69::_haveData;
 
+uint8_t tmpBuffer[512];
+
+
 RFM69::RFM69(uint8_t slaveSelectPin, uint8_t interruptPin, bool isRFM69HW)
 {
   _slaveSelectPin = slaveSelectPin;
@@ -46,16 +54,9 @@ RFM69::RFM69(uint8_t slaveSelectPin, uint8_t interruptPin, bool isRFM69HW)
   _spyMode = false;
   _powerLevel = 31;
   _isRFM69HW = isRFM69HW;
-#if defined(RF69_LISTENMODE_ENABLE)
-  _isHighSpeed = true;
-  _haveEncryptKey = false;
-  uint32_t rxDuration = DEFAULT_LISTEN_RX_US;
-  uint32_t idleDuration = DEFAULT_LISTEN_IDLE_US;
-  listenModeSetDurations(rxDuration, idleDuration);
-#endif
 }
 
-bool RFM69::initialize(uint8_t freqBand, uint16_t nodeID, uint8_t networkID)
+bool RFM69::initialize(uint8_t freqBand,uint8_t networkID)
 {
   _interruptNum = digitalPinToInterrupt(_interruptPin);
   if (_interruptNum == NOT_AN_INTERRUPT) return false;
@@ -65,16 +66,20 @@ bool RFM69::initialize(uint8_t freqBand, uint16_t nodeID, uint8_t networkID)
   const uint8_t CONFIG[][2] =
   {
     /* 0x01 */ { REG_OPMODE, RF_OPMODE_SEQUENCER_ON | RF_OPMODE_LISTEN_OFF | RF_OPMODE_STANDBY },
-    /* 0x02 */ { REG_DATAMODUL, RF_DATAMODUL_DATAMODE_PACKET | RF_DATAMODUL_MODULATIONTYPE_FSK | RF_DATAMODUL_MODULATIONSHAPING_00 }, // no shaping
-    /* 0x03 */ { REG_BITRATEMSB, RF_BITRATEMSB_55555}, // default: 4.8 KBPS
-    /* 0x04 */ { REG_BITRATELSB, RF_BITRATELSB_55555},
-    /* 0x05 */ { REG_FDEVMSB, RF_FDEVMSB_50000}, // default: 5KHz, (FDEV + BitRate / 2 <= 500KHz)
-    /* 0x06 */ { REG_FDEVLSB, RF_FDEVLSB_50000},
+    /* 0x02 */ { REG_DATAMODUL, RF_DATAMODUL_DATAMODE_PACKET | RF_DATAMODUL_MODULATIONTYPE_FSK | RF_DATAMODUL_MODULATIONSHAPING_01 },
+    
+    //100khz channel spacing(Assume that crystals are about 25Khz inaccurate
+    /* 0x03 */ { REG_BITRATEMSB, RF_BITRATEMSB_250000},
+    /* 0x04 */ { REG_BITRATELSB, RF_BITRATELSB_250000},
+    /* 0x05 */ { REG_FDEVMSB, RF_FDEVMSB_100000},
+    /* 0x06 */ { REG_FDEVLSB, RF_FDEVLSB_100000},
 
     /* 0x07 */ { REG_FRFMSB, (uint8_t) (freqBand==RF69_315MHZ ? RF_FRFMSB_315 : (freqBand==RF69_433MHZ ? RF_FRFMSB_433 : (freqBand==RF69_868MHZ ? RF_FRFMSB_868 : RF_FRFMSB_915))) },
     /* 0x08 */ { REG_FRFMID, (uint8_t) (freqBand==RF69_315MHZ ? RF_FRFMID_315 : (freqBand==RF69_433MHZ ? RF_FRFMID_433 : (freqBand==RF69_868MHZ ? RF_FRFMID_868 : RF_FRFMID_915))) },
     /* 0x09 */ { REG_FRFLSB, (uint8_t) (freqBand==RF69_315MHZ ? RF_FRFLSB_315 : (freqBand==RF69_433MHZ ? RF_FRFLSB_433 : (freqBand==RF69_868MHZ ? RF_FRFLSB_868 : RF_FRFLSB_915))) },
-
+        
+        
+        { REG_LNA, RF_LNA_ZIN_50|RF_LNA_GAINSELECT_MAX},
     // looks like PA1 and PA2 are not implemented on RFM69W/CW, hence the max output power is 13dBm
     // +17dBm and +20dBm are possible on RFM69HW
     // +13dBm formula: Pout = -18 + OutputPower (with PA0 or PA1**)
@@ -84,20 +89,21 @@ bool RFM69::initialize(uint8_t freqBand, uint16_t nodeID, uint8_t networkID)
     ///* 0x13 */ { REG_OCP, RF_OCP_ON | RF_OCP_TRIM_95 }, // over current protection (default is 95mA)
 
     // RXBW defaults are { REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_24 | RF_RXBW_EXP_5} (RxBw: 10.4KHz)
-    /* 0x19 */ { REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_16 | RF_RXBW_EXP_2 }, // (BitRate < 2 * RxBw)
+    /* 0x19 */ { REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_24 | RF_RXBW_EXP_1 }, // (BitRate < 2 * RxBw)
     //for BR-19200: /* 0x19 */ { REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_24 | RF_RXBW_EXP_3 },
     /* 0x25 */ { REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_01 }, // DIO0 is the only IRQ we're using
     /* 0x26 */ { REG_DIOMAPPING2, RF_DIOMAPPING2_CLKOUT_OFF }, // DIO5 ClkOut disable for power saving
     /* 0x28 */ { REG_IRQFLAGS2, RF_IRQFLAGS2_FIFOOVERRUN }, // writing to this bit ensures that the FIFO & status flags are reset
-    /* 0x29 */ { REG_RSSITHRESH, 220 }, // must be set to dBm = (-Sensitivity / 2), default is 0xE4 = 228 so -114dBm
-    ///* 0x2D */ { REG_PREAMBLELSB, RF_PREAMBLESIZE_LSB_VALUE } // default 3 preamble bytes 0xAAAAAA
-    /* 0x2E */ { REG_SYNCCONFIG, RF_SYNC_ON | RF_SYNC_FIFOFILL_AUTO | RF_SYNC_SIZE_2 | RF_SYNC_TOL_0 },
+    /* 0x29 */ { REG_RSSITHRESH, 250 }, // must be set to dBm = (-Sensitivity / 2), default is 0xE4 = 228 so -114dBm
+    /* 0x2D */ { REG_PREAMBLELSB, 0x04 }, //4 preamble bytes
+    
+    /* 0x2E */ { REG_SYNCCONFIG, RF_SYNC_ON | RF_SYNC_FIFOFILL_AUTO | RF_SYNC_SIZE_3 | RF_SYNC_TOL_1 },
     /* 0x2F */ { REG_SYNCVALUE1, 0x2D },      // attempt to make this compatible with sync1 byte of RFM12B lib
-    /* 0x30 */ { REG_SYNCVALUE2, networkID }, // NETWORK ID
-    //* 0x31 */ { REG_SYNCVALUE3, 0xAA },
+    /* 0x30 */ { REG_SYNCVALUE2, 'E' }, // NETWORK ID
+    /* 0x31 */ { REG_SYNCVALUE3, 'N' },
     //* 0x31 */ { REG_SYNCVALUE4, 0xBB },
-    /* 0x37 */ { REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_OFF | RF_PACKET1_CRC_ON | RF_PACKET1_CRCAUTOCLEAR_ON | RF_PACKET1_ADRSFILTERING_OFF },
-    /* 0x38 */ { REG_PAYLOADLENGTH, 66 }, // in variable length mode: the max frame size, not used in TX
+    /* 0x37 */ { REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_OFF | RF_PACKET1_CRC_OFF | RF_PACKET1_CRCAUTOCLEAR_OFF | RF_PACKET1_ADRSFILTERING_OFF },
+    /* 0x38 */ { REG_PAYLOADLENGTH, 80 }, // in variable length mode: the max frame size, not used in TX
     ///* 0x39 */ { REG_NODEADRS, nodeID }, // turned off because we're not using address filtering
     /* 0x3C */ { REG_FIFOTHRESH, RF_FIFOTHRESH_TXSTART_FIFONOTEMPTY | RF_FIFOTHRESH_VALUE }, // TX on FIFO not empty
     /* 0x3D */ { REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_2BITS | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF }, // RXRESTARTDELAY must match transmitter PA ramp-down time (bitrate dependent)
@@ -135,12 +141,7 @@ bool RFM69::initialize(uint8_t freqBand, uint16_t nodeID, uint8_t networkID)
     return false;
   attachInterrupt(_interruptNum, RFM69::isr0, RISING);
 
-  _address = nodeID;
-#if defined(RF69_LISTENMODE_ENABLE)
-  selfPointer = this;
-  _freqBand = freqBand;
-  _networkID = networkID;
-#endif
+
   return true;
 }
 
@@ -206,12 +207,6 @@ void RFM69::sleep() {
   setMode(RF69_MODE_SLEEP);
 }
 
-//set this node's address
-void RFM69::setAddress(uint16_t addr)
-{
-  _address = addr;
-  writeReg(REG_NODEADRS, _address); //unused in packet mode
-}
 
 //set this node's network id
 void RFM69::setNetwork(uint8_t networkID)
@@ -243,85 +238,77 @@ bool RFM69::canSend()
   return false;
 }
 
-void RFM69::send(uint16_t toAddress, const void* buffer, uint8_t bufferSize, bool requestACK)
+
+void RFM69::sendSG1(const void* buffer, uint8_t bufferSize, bool useFEC)
+{ 
+    int payloadSize=bufferSize;
+
+    /*
+     * Header Format
+     *
+     * Length(Actually part of the raw packet framing the RFM69 does, so we don't send it, but it is still the first byte and protected by FEC
+     * Flags:
+     *    0-1: FEC Type: 0=Only header, 1=Golay code for entire packet
+
+     *
+     */
+    uint8_t header[3]={0,0,0};
+    Serial.println(bufferSize);
+
+    if (useFEC)
+    {
+        //Pad to multiple of 3
+        while(payloadSize%3)
+        {
+            payloadSize+=1;
+        }
+    
+        for(unsigned char i=0;i<payloadSize;i+=3)
+        {
+            golay_block_encode(buffer+i, tmpBuffer+6+(i*2));
+        }
+
+        header[1] |= 0b01;
+        header[0]= (payloadSize*2)+6;
+    }
+    else {
+        memcpy(tmpBuffer+6, buffer, bufferSize);
+        header[0]= (payloadSize)+6;
+
+    }
+
+
+
+    golay_block_encode(header,tmpBuffer);
+
+    //+1 skip the length  byte that is already part of the RFM69 raw framing that the lib handles at a lower level.
+    send(tmpBuffer+1, header[0]-1 );
+
+}
+
+
+void RFM69::send(const void* buffer, uint8_t bufferSize)
 {
   writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFB) | RF_PACKET2_RXRESTART); // avoid RX deadlocks
   uint32_t now = millis();
   while (!canSend() && millis() - now < RF69_CSMA_LIMIT_MS) receiveDone();
-  sendFrame(toAddress, buffer, bufferSize, requestACK, false);
+  sendFrame(buffer, bufferSize);
 }
 
-// to increase the chance of getting a packet across, call this function instead of send
-// and it handles all the ACK requesting/retrying for you :)
-// The only twist is that you have to manually listen to ACK requests on the other side and send back the ACKs
-// The reason for the semi-automaton is that the lib is interrupt driven and
-// requires user action to read the received data and decide what to do with it
-// replies usually take only 5..8ms at 50kbps@915MHz
-bool RFM69::sendWithRetry(uint16_t toAddress, const void* buffer, uint8_t bufferSize, uint8_t retries, uint8_t retryWaitTime) {
-  uint32_t sentTime;
-  for (uint8_t i = 0; i <= retries; i++)
-  {
-    send(toAddress, buffer, bufferSize, true);
-    sentTime = millis();
-    while (millis() - sentTime < retryWaitTime)
-    {
-      if (ACKReceived(toAddress)) return true;
-    }
-  }
-  return false;
-}
 
-// should be polled immediately after sending a packet with ACK request
-bool RFM69::ACKReceived(uint16_t fromNodeID) {
-  if (receiveDone())
-    return (SENDERID == fromNodeID || fromNodeID == RF69_BROADCAST_ADDR) && ACK_RECEIVED;
-  return false;
-}
-
-// check whether an ACK was requested in the last received packet (non-broadcasted packet)
-bool RFM69::ACKRequested() {
-  return ACK_REQUESTED && (TARGETID == _address);
-}
-
-// should be called immediately after reception in case sender wants ACK
-void RFM69::sendACK(const void* buffer, uint8_t bufferSize) {
-  ACK_REQUESTED = 0;   // TWS added to make sure we don't end up in a timing race and infinite loop sending Acks
-  uint16_t sender = SENDERID;
-  int16_t _RSSI = RSSI; // save payload received RSSI value
-  writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFB) | RF_PACKET2_RXRESTART); // avoid RX deadlocks
-  uint32_t now = millis();
-  while (!canSend() && millis() - now < RF69_CSMA_LIMIT_MS) receiveDone();
-  SENDERID = sender;    // TWS: Restore SenderID after it gets wiped out by receiveDone()
-  sendFrame(sender, buffer, bufferSize, false, true);
-  RSSI = _RSSI; // restore payload RSSI
-}
 
 // internal function
-void RFM69::sendFrame(uint16_t toAddress, const void* buffer, uint8_t bufferSize, bool requestACK, bool sendACK)
+void RFM69::sendFrame(const void* buffer, uint8_t bufferSize)
 {
   setMode(RF69_MODE_STANDBY); // turn off receiver to prevent reception while filling fifo
   while ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00); // wait for ModeReady
   //writeReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_00); // DIO0 is "Packet Sent"
   if (bufferSize > RF69_MAX_DATA_LEN) bufferSize = RF69_MAX_DATA_LEN;
 
-  // control byte
-  uint8_t CTLbyte = 0x00;
-  if (sendACK)
-    CTLbyte = RFM69_CTL_SENDACK;
-  else if (requestACK)
-    CTLbyte = RFM69_CTL_REQACK;
-
-  if (toAddress > 0xFF) CTLbyte |= (toAddress & 0x300) >> 6; //assign last 2 bits of address if > 255
-  if (_address > 0xFF) CTLbyte |= (_address & 0x300) >> 8;   //assign last 2 bits of address if > 255
-
   // write to FIFO
   select();
   SPI.transfer(REG_FIFO | 0x80);
-  SPI.transfer(bufferSize + 3);
-  SPI.transfer((uint8_t)toAddress);
-  SPI.transfer((uint8_t)_address);
-  SPI.transfer(CTLbyte);
-
+  SPI.transfer(bufferSize);
   for (uint8_t i = 0; i < bufferSize; i++)
     SPI.transfer(((uint8_t*) buffer)[i]);
   unselect();
@@ -334,40 +321,90 @@ void RFM69::sendFrame(uint16_t toAddress, const void* buffer, uint8_t bufferSize
   setMode(RF69_MODE_STANDBY);
 }
 
+
+static uint8_t inBuffer_header[3] = {0,0,0};
+
 // internal function - interrupt gets called when a packet is received
 void RFM69::interruptHandler() {
+    
   if (_mode == RF69_MODE_RX && (readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PAYLOADREADY))
   {
     setMode(RF69_MODE_STANDBY);
     select();
     SPI.transfer(REG_FIFO & 0x7F);
     PAYLOADLEN = SPI.transfer(0);
-    PAYLOADLEN = PAYLOADLEN > 66 ? 66 : PAYLOADLEN; // precaution
-    TARGETID = SPI.transfer(0);
-    SENDERID = SPI.transfer(0);
-    uint8_t CTLbyte = SPI.transfer(0);
-    TARGETID |= (uint16_t(CTLbyte) & 0x0C) << 6; //10 bit address (most significant 2 bits stored in bits(2,3) of CTL byte
-    SENDERID |= (uint16_t(CTLbyte) & 0x03) << 8; //10 bit address (most sifnigicant 2 bits stored in bits(0,1) of CTL byte
 
-    if(!(_spyMode || TARGETID == _address || TARGETID == RF69_BROADCAST_ADDR) // match this node's address, or broadcast address or anything in spy mode
-       || PAYLOADLEN < 3) // address situation could receive packets that are malformed and don't fit this libraries extra fields
+    inBuffer_header[1]=0;
+
+
+
+    //First byte is the actual length from the framing, which includes itself
+    tmpBuffer[0]=PAYLOADLEN;
+
+    for (uint8_t i = 0; i < (PAYLOADLEN-1); i++)
     {
-      PAYLOADLEN = 0;
-      unselect();
-      receiveBegin();
-      return;
+        DATA[i]=SPI.transfer(0);
     }
 
-    DATALEN = PAYLOADLEN - 3;
-    ACK_RECEIVED = CTLbyte & RFM69_CTL_SENDACK; // extract ACK-received flag
-    ACK_REQUESTED = CTLbyte & RFM69_CTL_REQACK; // extract ACK-requested flag
-    interruptHook(CTLbyte);     // TWS: hook to derived class interrupt function
 
-    for (uint8_t i = 0; i < DATALEN; i++) DATA[i] = SPI.transfer(0);
+   //Copy evrything in the header but the length nyte we already have
+    memcpy(&(tmpBuffer[1]), DATA, 5);
+    Serial.println("here");
+    Serial.flush();
 
+    golay_block_decode(tmpBuffer,inBuffer_header);
+
+    Serial.println("here");
+    Serial.flush();
+
+
+    //subtract 1 from header, to skip past the implicit length byte,
+    //It now represents the length of DATA
+    inBuffer_header[0]-=1;
+
+    //Buffer overflow prevention
+    if(inBuffer_header[0]>80)
+    {
+        inBuffer_header[0]=80;
+    }
+
+
+
+    Serial.println((int)((inBuffer_header[1]& 0b11)));
+    Serial.flush();
+
+    //Check what kind of FEC we are supposed to be using.
+    if((inBuffer_header[1]& 0b11) == 1)
+    {
+        //Full packet FEC mode. N
+        for (uint8_t i = 0; i < (inBuffer_header[0]-5); i+=6)
+        {
+               Serial.println(i);
+               Serial.flush();
+            //Note that we start at 5 to skip header, not 6, because the lenth byte isn't actually in the buffer
+            //Decode all the 3 byte blocks into 6 byte blocks.
+            golay_block_decode(DATA+i+5,tmpBuffer+(i/2));
+        }
+        //Subtract header, div by 2 because of code rate.
+        //We are going to use the FEC decoded packet length, not the real one,
+        //To allow us to get rid of any extra data after the end caused by a 1 to 0 flip.
+        DATALEN=(inBuffer_header[0]-5)/2;
+
+    }
+    else {
+        DATALEN=(inBuffer_header[0]-4);
+        //Subtract header, but use the raw packet data.
+        memcpy(tmpBuffer, DATA+5,inBuffer_header[0]-4);
+    }
+
+    memcpy(DATA, tmpBuffer, DATALEN);
+    
+    
     DATA[DATALEN] = 0; // add null at end of string // add null at end of string
+
     unselect();
-    setMode(RF69_MODE_RX);
+    setMode(RF69_MODE_RX);    DATA[DATALEN] = 0; // add null at end of string // add null at end of string
+
   }
   RSSI = readRSSI();
 }
@@ -383,14 +420,29 @@ void RFM69::receiveBegin() {
   PAYLOADLEN = 0;
   ACK_REQUESTED = 0;
   ACK_RECEIVED = 0;
-#if defined(RF69_LISTENMODE_ENABLE)
-  RF69_LISTEN_BURST_REMAINING_MS = 0;
-#endif
+
   RSSI = 0;
   if (readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PAYLOADREADY)
     writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFB) | RF_PACKET2_RXRESTART); // avoid RX deadlocks
   writeReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_01); // set DIO0 to "PAYLOADREADY" in receive mode
   setMode(RF69_MODE_RX);
+}
+
+
+
+bool RFM69::isRecieving()
+{
+   
+   noInterrupts();
+   //If we did not get the 
+   if((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_RXREADY) == 0x00)
+   {
+       interrupts();
+       return false;
+   }
+   interrupts();
+   return true;
+
 }
 
 // checks if a packet was received and/or puts transceiver in receive (ie RX or listen) mode
@@ -416,15 +468,11 @@ bool RFM69::receiveDone() {
 // To disable encryption: radio.encrypt(null) or radio.encrypt(0)
 // KEY HAS TO BE 16 bytes !!!
 void RFM69::encrypt(const char* key) {
-#if defined(RF69_LISTENMODE_ENABLE)
-  _haveEncryptKey = key;
-#endif
+
   setMode(RF69_MODE_STANDBY);
   if (key != 0)
   {
-#if defined(RF69_LISTENMODE_ENABLE)
-    memcpy(_encryptKey, key, 16);
-#endif
+
     select();
     SPI.transfer(REG_AESKEY1 | 0x80);
     for (uint8_t i = 0; i < 16; i++)
@@ -537,7 +585,7 @@ void RFM69::setCS(uint8_t newSPISlaveSelect) {
 }
 
 //for debugging
-#define REGISTER_DETAIL 0
+#define REGISTER_DETAIL 1
 #if REGISTER_DETAIL
 // SERIAL PRINT
 // replace Serial.print("string") with SerialPrint("string")
@@ -857,276 +905,3 @@ void RFM69::rcCalibration()
   writeReg(REG_OSC1, RF_OSC1_RCCAL_START);
   while ((readReg(REG_OSC1) & RF_OSC1_RCCAL_DONE) == 0x00);
 }
-
-//=============================================================================
-//                     ListenMode specific functions  
-//=============================================================================
-#if defined(RF69_LISTENMODE_ENABLE)
-RFM69* RFM69::selfPointer=0;
-volatile uint16_t RFM69::RF69_LISTEN_BURST_REMAINING_MS = 0;
-
-//=============================================================================
-// reinitRadio() - use base class initialization with saved values
-//=============================================================================
-bool RFM69::reinitRadio()
-{
-  if (!initialize(_freqBand, _address, _networkID)) return false;
-  if (_haveEncryptKey) RFM69::encrypt(_encryptKey); // Restore the encryption key if necessary
-  if (_isHighSpeed) writeReg(REG_LNA, (readReg(REG_LNA) & ~0x3) | RF_LNA_GAINSELECT_AUTO);
-  return true;
-}
-
-static uint32_t getUsForResolution(uint8_t resolution)
-{
-  switch (resolution) {
-    case RF_LISTEN1_RESOL_RX_64:
-    case RF_LISTEN1_RESOL_IDLE_64:
-      return 64;
-    case RF_LISTEN1_RESOL_RX_4100:
-    case RF_LISTEN1_RESOL_IDLE_4100:
-      return 4100;
-    case RF_LISTEN1_RESOL_RX_262000:
-    case RF_LISTEN1_RESOL_IDLE_262000:
-      return 262000;
-    default:
-      // Whoops
-      return 0;
-  }
-}
-
-static uint32_t getCoefForResolution(uint8_t resolution, uint32_t duration)
-{
-  uint32_t resolDuration = getUsForResolution(resolution);
-  uint32_t result = duration / resolDuration;
-
-  // If the next-higher coefficient is closer, use that
-  if (abs(duration - ((result + 1) * resolDuration)) < abs(duration - (result * resolDuration)))
-    return result + 1;
-
-  return result;
-}
-
-static bool chooseResolutionAndCoef(uint8_t *resolutions, uint32_t duration, uint8_t& resolOut, uint8_t& coefOut)
-{
-  for (int i = 0; resolutions[i]; i++) {
-    uint32_t coef = getCoefForResolution(resolutions[i], duration);
-    if (coef <= 255) {
-      coefOut = coef;
-      resolOut = resolutions[i];
-      return true;
-    }
-  }
-
-  // out of range
-  return false;
-}
-
-bool RFM69::listenModeSetDurations(uint32_t& rxDuration, uint32_t& idleDuration)
-{
-  uint8_t rxResolutions[] = { RF_LISTEN1_RESOL_RX_64, RF_LISTEN1_RESOL_RX_4100, RF_LISTEN1_RESOL_RX_262000, 0 };
-  uint8_t idleResolutions[] = { RF_LISTEN1_RESOL_IDLE_64, RF_LISTEN1_RESOL_IDLE_4100, RF_LISTEN1_RESOL_IDLE_262000, 0 };
-
-  if (!chooseResolutionAndCoef(rxResolutions, rxDuration, _rxListenResolution, _rxListenCoef))
-    return false;
-
-  if (!chooseResolutionAndCoef(idleResolutions, idleDuration, _idleListenResolution, _idleListenCoef))
-    return false;
-
-  rxDuration = getUsForResolution(_rxListenResolution) * _rxListenCoef;
-  idleDuration = getUsForResolution(_idleListenResolution) * _idleListenCoef;
-  _listenCycleDurationUs = rxDuration + idleDuration;
-
-  return true;
-}
-
-void RFM69::listenModeGetDurations(uint32_t &rxDuration, uint32_t &idleDuration)
-{
-  rxDuration = getUsForResolution(_rxListenResolution) * _rxListenCoef;
-  idleDuration = getUsForResolution(_idleListenResolution) * _idleListenCoef;
-}
-
-void RFM69::listenModeReset(void)
-{
-  DATALEN = 0;
-  SENDERID = 0;
-  TARGETID = 0;
-  PAYLOADLEN = 0;
-  ACK_REQUESTED = 0;
-  ACK_RECEIVED = 0;
-  RF69_LISTEN_BURST_REMAINING_MS = 0;
-}
-
-//=============================================================================
-// irq handler, simply calls listenModeInterruptHandler method so internal methods can be accessed easily
-//=============================================================================
-ISR_PREFIX void RFM69::listenModeIrq() { selfPointer->listenModeInterruptHandler(); }
-
-//=============================================================================
-// listenModeInterruptHandler() - only called by listen irq handler
-//=============================================================================
-void RFM69::listenModeInterruptHandler(void)
-{
-  if (DATALEN != 0) return;
-
-  listenModeReset();
-  noInterrupts();
-  select();
-
-  union                        // union to simplify addressing of long and short parts of time offset
-  {
-    uint32_t l;
-    uint8_t  b[4];
-  } burstRemaining;
-
-  burstRemaining.l = 0;
-
-  SPI.transfer(REG_FIFO & 0x7F);
-  PAYLOADLEN = SPI.transfer(0);
-  PAYLOADLEN = PAYLOADLEN > 64 ? 64 : PAYLOADLEN; // precaution
-  TARGETID = SPI.transfer(0);
-  if(!(_spyMode || TARGETID == _address || TARGETID == RF69_BROADCAST_ADDR) // match this node's address, or broadcast address or anything in spy mode
-     || PAYLOADLEN < 3) // address situation could receive packets that are malformed and don't fit this library's extra fields
-  {
-    listenModeReset();
-    goto out;
-  }
-
-  // We've read the target, and will read the sender id and two time offset bytes for a total of 4 bytes
-  DATALEN = PAYLOADLEN - 4;
-  SENDERID = SPI.transfer(0);
-  burstRemaining.b[0] =  SPI.transfer(0);  // and get the time remaining
-  burstRemaining.b[1] =  SPI.transfer(0);
-  RF69_LISTEN_BURST_REMAINING_MS = burstRemaining.l;
-
-  for (uint8_t i = 0; i < DATALEN; i++)
-    DATA[i] = SPI.transfer(0);
-
-  if (DATALEN < RF69_MAX_DATA_LEN)
-    DATA[DATALEN] = 0; // add null at end of string
-
-out:
-  unselect();
-  interrupts();
-}
-
-//=============================================================================
-// listenModeStart() - switch radio to Listen Mode in prep for sleep until burst
-//=============================================================================
-void RFM69::listenModeStart(void)
-{
-  //pRadio = this;
-  while (readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PACKETSENT == 0x00); // wait for ModeReady
-  listenModeReset();
-
-  detachInterrupt(_interruptNum);
-  attachInterrupt(_interruptNum, listenModeIrq, RISING);
-  setMode(RF69_MODE_STANDBY);
-  writeReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_01);
-  writeReg(REG_FRFMSB, readReg(REG_FRFMSB) + 1);
-  writeReg(REG_FRFLSB, readReg(REG_FRFLSB));      // MUST write to LSB to affect change!
-
-  listenModeApplyHighSpeedSettings();
-
-  writeReg(REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_WHITENING | RF_PACKET1_CRC_ON | RF_PACKET1_CRCAUTOCLEAR_ON);
-  writeReg(REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_NONE | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF);
-  writeReg(REG_SYNCVALUE1, 0x5A);
-  writeReg(REG_SYNCVALUE2, 0x5A);
-  writeReg(REG_LISTEN1, _rxListenResolution | _idleListenResolution | RF_LISTEN1_CRITERIA_RSSI | RF_LISTEN1_END_10);
-  writeReg(REG_LISTEN2, _idleListenCoef);
-  writeReg(REG_LISTEN3, _rxListenCoef);
-  writeReg(REG_RSSITHRESH, 180);
-  writeReg(REG_RXTIMEOUT2, 75);
-  writeReg(REG_OPMODE, RF_OPMODE_SEQUENCER_ON | RF_OPMODE_STANDBY);
-  writeReg(REG_OPMODE, RF_OPMODE_SEQUENCER_ON | RF_OPMODE_LISTEN_ON  | RF_OPMODE_STANDBY);
-}
-
-//=============================================================================
-// listenModeEnd() - exit listen mode and reinit the radio
-//=============================================================================
-void RFM69::listenModeEnd(void)
-{
-  detachInterrupt(_interruptNum);
-  writeReg(REG_OPMODE, RF_OPMODE_SEQUENCER_ON | RF_OPMODE_LISTENABORT | RF_OPMODE_STANDBY);
-  writeReg(REG_OPMODE, RF_OPMODE_SEQUENCER_ON | RF_OPMODE_STANDBY);
-  writeReg(REG_RXTIMEOUT2, 0);
-  setMode(RF69_MODE_STANDBY);
-  while ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00); // wait for ModeReady
-  listenModeReset();
-  reinitRadio();
-}
-
-void RFM69::listenModeApplyHighSpeedSettings()
-{
-  if (!_isHighSpeed) return;
-  writeReg(REG_BITRATEMSB, RF_BITRATEMSB_200000);
-  writeReg(REG_BITRATELSB, RF_BITRATELSB_200000);
-  writeReg(REG_FDEVMSB, RF_FDEVMSB_100000);
-  writeReg(REG_FDEVLSB, RF_FDEVLSB_100000);
-  writeReg( REG_RXBW, RF_RXBW_DCCFREQ_000 | RF_RXBW_MANT_20 | RF_RXBW_EXP_0 );
-  
-  // Force LNA to the highest gain
-  //writeReg(REG_LNA, (readReg(REG_LNA) << 2) | RF_LNA_GAINSELECT_MAX);
-}
-
-//=============================================================================
-// sendBurst() - send a burst of packets to a sleeping listening node (or all)
-//=============================================================================
-void RFM69::listenModeSendBurst( uint8_t targetNode, const void* buffer, uint8_t size )
-{
-  detachInterrupt(_interruptNum);
-  setMode(RF69_MODE_STANDBY);
-  writeReg(REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_WHITENING | RF_PACKET1_CRC_ON | RF_PACKET1_CRCAUTOCLEAR_ON );
-  writeReg(REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_NONE | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF);
-  writeReg(REG_SYNCVALUE1, 0x5A);
-  writeReg(REG_SYNCVALUE2, 0x5A);
-  listenModeApplyHighSpeedSettings();
-  writeReg(REG_FRFMSB, readReg(REG_FRFMSB) + 1);
-  writeReg(REG_FRFLSB, readReg(REG_FRFLSB));      // MUST write to LSB to affect change!
-
-  union // union to simplify addressing of long and short parts of time offset
-  {
-    int32_t l;
-    uint8_t b[4];
-  } timeRemaining;
-
-  uint16_t cycleDurationMs = _listenCycleDurationUs / 1000;
-  timeRemaining.l = cycleDurationMs;
-
-#ifdef RF69_WL_DEBUG
-  Serial.print("Sending burst for ");
-  Serial.print(cycleDurationMs, DEC);
-  Serial.println(" ms");
-#endif
-
-  setMode(RF69_MODE_TX);
-  uint32_t numSent = 0;
-  uint32_t startTime = millis();
-
-  while(timeRemaining.l > 0) {
-    noInterrupts();
-    // write to FIFO
-    select();
-    SPI.transfer(REG_FIFO | 0x80);
-    SPI.transfer(size + 4);      // two bytes for target and sender node, two bytes for the burst time remaining
-    SPI.transfer(targetNode);
-    SPI.transfer(_address);
-
-    // We send the burst time remaining with the packet so the receiver knows how long to wait before trying to reply
-    SPI.transfer(timeRemaining.b[0]);
-    SPI.transfer(timeRemaining.b[1]);
-
-    for (uint8_t i = 0; i < size; i++) {
-      SPI.transfer(((uint8_t*) buffer)[i]);
-    }
-
-    unselect();
-    interrupts();
-
-    while ((readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_FIFONOTEMPTY) != 0x00);  // make sure packet is sent before putting more into the FIFO
-    timeRemaining.l = cycleDurationMs - (millis() - startTime);
-  }
-
-  setMode(RF69_MODE_STANDBY);
-  reinitRadio();
-}
-#endif
