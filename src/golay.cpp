@@ -285,21 +285,31 @@ void golay_block_encode(uint8_t * in, uint8_t * out)
 }
 
 //6 bytes into 3 bytes
-void golay_block_decode(uint8_t * in, uint8_t * out)
+bool golay_block_decode(uint8_t * in, uint8_t * out)
 {
     //First 24 input bits
-    uint32_t temp_in = *((uint32_t *)in);
+    bool fail=false;
+    uint32_t temp_in = ((uint32_t *)in)[0];
     temp_in &= 0b111111111111111111111111;
-    uint32_t temp = golay_decode(temp_in);
+    int32_t temp = golay_decode(temp_in);
+    if(temp==-1)
+    {
+        fail=true;
+    }
 
 
-    temp_in = *((uint32_t *)(in+3));
+    temp_in = ((uint32_t *)(in+3))[0];
     temp_in &= 0b111111111111111111111111;
 
     temp |= (golay_decode(temp_in)<<12);
+        if(temp==-1)
+    {
+        fail=true;
+    }
+
 
     out[0]= ((uint8_t *)(&temp))[0];
     out[1]= ((uint8_t *)(&temp))[1];
     out[2]= ((uint8_t *)(&temp))[2];
-
+    return fail;
 }

@@ -138,7 +138,7 @@
   #define RF69_IRQ_PIN          2
 #endif
 
-#define RF69_MAX_DATA_LEN       61 // to take advantage of the built in AES/CRC we want to limit the frame size to the internal FIFO size (66 bytes - 3 bytes overhead - 2 bytes crc)
+#define RF69_MAX_DATA_LEN       128 // to take advantage of the built in AES/CRC we want to limit the frame size to the internal FIFO size (66 bytes - 3 bytes overhead - 2 bytes crc)
 #define CSMA_LIMIT              -90 // upper RX signal sensitivity threshold in dBm for carrier sense access
 #define RF69_MODE_SLEEP         0 // XTAL OFF
 #define RF69_MODE_STANDBY       1 // XTAL ON
@@ -165,18 +165,77 @@
 
 #define RFM69_ACK_TIMEOUT   30  // 30ms roundtrip req for 61byte packets
 
+// You can't have 2 of the same ID on a channel or security goes down.
+// These predefined IDs are to reduce the chance of accidentally doing that.
+#define NODEID_HUB 1
+#define NODEID_SENSOR 2
+#define NODEID_SWITCH 3
+#define NODEID_LIGHT 4
+#define NODEID_HANDHELD 5
+#define NODEID_ROBOT 6
 
 class RFM69 {
   public:
     static uint8_t DATA[RF69_MAX_DATA_LEN+1]; // RX/TX payload buffer, including end of string NULL char
     static uint8_t DATALEN;
-    static uint16_t SENDERID;
-    static uint16_t TARGETID; // should match _address
     static uint8_t PAYLOADLEN;
-    static uint8_t ACK_REQUESTED;
-    static uint8_t ACK_RECEIVED; // should be polled immediately after sending a packet with ACK request
     static int16_t RSSI; // most accurate RSSI during reception (closest to the reception). RSSI of last packet.
     static uint8_t _mode; // should be protected?
+
+    uint8_t channelKey[32];
+
+
+    //Thie hint sequences for 3 seconds ago.
+    //We have to keep old and new, because the clocks are not to be
+    //Expected to stay accurate.
+
+    //Used as the first 4 bytes after header to cause a wakeup
+    uint32_t privateWakeSequence;
+    //Used as the normal beaconing that devices do to announce that they are on a certain
+    //channel
+    uint32_t privateHintSequence;
+
+    uint32_t fixedHintSequence;
+
+
+
+    //The hint sequence for 3 seconds from now
+    //Used as the first 4 bytes after header to cause a wakeup
+    uint32_t newPrivateWakeSequence;
+    //Used as the normal beaconing that devices do to announce that they are on a certain
+    //channel
+    uint32_t newPrivateHintSequence;
+
+
+    //Header of the last packet
+    uint8_t rxHeader[3];
+
+    //IV, including timestamp
+    uint8_t rxIV[8];
+
+
+    bool receivedReply();
+    bool isReply();
+
+
+    //When we last got a correct packet
+    unsigned long lastRx=0;
+
+
+    uint8_t nodeID;
+
+
+    //Cached interval number for the privateHintSequence cache
+    uint64_t intervalNumber;
+
+    int8_t rxPathLoss= 127;
+    bool wakeRequestFlag =0;
+
+    //Send a beacon and check for the wake message.
+    //Return True on wake message, else turn radio off(call recieveDone to wake)
+    bool sendBeaconSleep();
+    void encrypt(const char * key);
+
 
     RFM69(uint8_t slaveSelectPin, uint8_t interruptPin, bool isRFM69HW, uint8_t interruptNum) //interruptNum is now deprecated
                 : RFM69(slaveSelectPin, interruptPin, isRFM69HW){};
@@ -186,9 +245,28 @@ class RFM69 {
     bool initialize(uint8_t freqBand, uint8_t networkID=1);
 
     void setNetwork(uint8_t networkID);
+    void getEntropy(int changes=512);
+    bool decodeEvernet();
+    int64_t getPacketTimestamp();
+
+    void setBitrate(uint32_t bps);
+    void setChannelFilter(uint32_t bps);
+    void setDeviation(uint32_t hz);
+    void setChannelNumber(uint16_t ch);
+
+    //Width of a channel in khz includig padding
+    uint16_t channelSpacing=250;
+    uint16_t channelNumber=1;
+
+    uint8_t freqBand = 0;
+
+    void setChannelKey(uint8_t * key);
+
+    void doBeacon();
     bool canSend();
     virtual void send(const void* buffer, uint8_t bufferSize);
-    virtual void sendSG1(const void* buffer, uint8_t bufferSize, bool useFEC=true);
+    virtual void sendEvernet(const void* buffer, uint8_t bufferSize,uint8_t * challenge=0);
+    virtual void rawSendEvernet(const void* buffer, uint8_t bufferSize, bool useFEC, int8_t txPower, uint8_t * useChallenge);
 
     virtual bool receiveDone();
     bool ACKReceived(uint16_t fromNodeID);
@@ -196,7 +274,7 @@ class RFM69 {
     
     uint32_t getFrequency();
     void setFrequency(uint32_t freqHz);
-    void encrypt(const char* key);
+
     void setCS(uint8_t newSPISlaveSelect);
     int16_t readRSSI(bool forceTrigger=false); // *current* signal strength indicator; e.g. < -90dBm says the frequency channel is free + ready to transmit
     void spyMode(bool onOff=true);
@@ -213,13 +291,26 @@ class RFM69 {
     void readAllRegs();
     void readAllRegsCompact();
     bool isRecieving();
+
+    unsigned long rxTime=0;
     
   protected:
+    void _rawSendBeacon(uint8_t power, bool wakeUp);
     static void isr0();
     void interruptHandler();
     virtual void interruptHook(uint8_t CTLbyte) {};
     static volatile bool _haveData;
     virtual void sendFrame(const void* buffer, uint8_t size);
+    uint8_t _getAutoTxPower();
+    void recalcBeaconBytes();
+    void doPerPacketTimeFunctions(uint8_t rxTimeTrust);
+
+
+    //Most recent timestamp that re have decoded.
+    int64_t channelTimestampHead=0;
+
+    //Are we waiting for a reply
+    uint8_t awaitReplyToIv[8];
 
     uint8_t _slaveSelectPin;
     uint8_t _interruptPin;
@@ -244,4 +335,11 @@ class RFM69 {
 
 };
 
+
+
+uint32_t urandomRange(uint32_t f, uint32_t t);
+void urandom(uint8_t * target, uint8_t len);
+
 #endif
+
+#define debug(x) Serial.println(x);Serial.flush()
