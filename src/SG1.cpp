@@ -135,7 +135,7 @@ void doTimestamp()
   //TODO: 
   if(systemTimeTrust & TIMETRUST_ACCURATE)
   {
-    if(systemTime-lastAccurateTimeSet> 600000L)
+    if(systemTime-lastAccurateTimeSet> 600000LL)
     {
       systemTimeMicros -= TIMETRUST_ACCURATE;
     }
@@ -236,7 +236,7 @@ uint8_t tmpBuffer[128];
 uint8_t smallBuffer[128];
 
 
-uint8_t RFM69::_getAutoTxPower()
+int8_t RFM69::getAutoTxPower()
 {
   int8_t txPower =13;
 
@@ -248,10 +248,10 @@ uint8_t RFM69::_getAutoTxPower()
   }
   //If we have a message in the last 3 minutes, that means that we can
   //use TX power control
-  if(lastRx>(systemTime+(3L*60L*1000L*1000L)))
+  if(lastRx>(systemTime-(3L*60L*1000L*1000LL)))
   {
     //Target an RSSI on the other end of -90
-    txPower = -90+rxPathLoss;
+    txPower = (-90)+rxPathLoss;
     while(txPower%4)
     {
       txPower++;
@@ -276,9 +276,7 @@ void RFM69::sendSG1(const void* buffer, uint8_t bufferSize, uint8_t * challenge)
 {
   doTimestamp();
 
-  int8_t txPower= _getAutoTxPower();
-  debug(" TX Power:");
-  debug(txPower);
+  int8_t txPower= getAutoTxPower();
   rawSendSG1(buffer, bufferSize, txPower>10, txPower,challenge);
 
 }
@@ -306,7 +304,6 @@ void RFM69::rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8
     }
 
     header[1]|= _headerTimeTrust();
-    Serial.println(bufferSize);
 
     //If the whole message would be more than 128 bytes we gave to turn off FEC
     if (payloadSize>10)
@@ -424,8 +421,7 @@ void RFM69::rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8
     golay_block_encode(header,tmpBuffer);
 
 
-    debug("Send size");
-    debug(header[0]);
+
     //+1 skip the length  byte that is already part of the RFM69 raw framing that the lib handles at a lower level.
     send(tmpBuffer+1, header[0]);
 }
@@ -453,13 +449,13 @@ void RFM69::recalcBeaconBytes() {
 
   union{ 
       //Add 3 seconds to push us into the next 
-      uint64_t newIntervalNumber = (systemTime+3000000L)/16777216;
+      uint64_t newIntervalNumber = (systemTime+3000000LL)/16777216;
       uint8_t IV[8];
   };
 
   union{ 
       //Add 3 seconds to push us into the previous 
-      uint64_t oldIntervalNumber = (systemTime-3000000L)/16777216;
+      uint64_t oldIntervalNumber = (systemTime-3000000LL)/16777216;
       uint8_t oldIV[8];
   };
 
@@ -511,39 +507,32 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
     int64_t rxTimestamp=getPacketTimestamp();
     int64_t diff;
 
-    if(rxTimestamp<systemTime)
-    {
-      diff=systemTime-rxTimestamp;
-    }
-      else
-    {
-      diff=rxTimestamp-systemTime;
-    }
+
+    //Gonna subtract the data time, the preamble, and the sync bytes
+    //at 100kbps. We want the start time.
+
+    //This basically find out how far ahead their clock is
+    diff=rxTimestamp-(rxTime-((PAYLOADLEN*bitTime)+400LL+400LL));
+
+    //#TODO: This expects that the clock does not get set in between
+    //recieve and decode.
+
     //If we trust this packet more than the clock,
     //Set the clock from this.
 
     //If time is not set, this allows a replay attack.
     if((rxTimeTrust>=systemTimeTrust) & (rxTimeTrust>=TIMETRUST_SECURE))
     {
-      debug("sst528");
-      debug(systemTime/1000000.0);
-      //Gonna subtract the data time, the preamble, and the sync bytes
-      //at 100kbps.
-      systemTimeMicros=rxTime-((PAYLOADLEN*bitTime)+400L+400L);
       //data+4 is node ID, the rest of the IV is the time.
-
-      if(( (rxTimeTrust & TIMETRUST_ACCURATE) || (abs(diff)>100000)))
+      if(( (rxTimeTrust & TIMETRUST_ACCURATE) || (abs(diff)>100000LL)))
       {
-        debug("Abs set");
-        systemTime=getPacketTimestamp();
+        systemTime+=diff;
       }
       else
       {
-        debug("avg");
         //For small differences with inaccurate clocks, average
         //Our time and theirs, to hopefully get some kind of consenseus.
-        systemTime+= getPacketTimestamp();
-        systemTime/=2;
+        systemTime+= (diff/2LL);
       }
 
       //Yes, this can go backwards
@@ -570,10 +559,9 @@ void RFM69::interruptHandler() {
   {
     wakeRequestFlag=0;
 
-
-    rxTime = micros();
+    doTimestamp();
+    rxTime = systemTime;
     setMode(RF69_MODE_STANDBY);
-    RSSI = readRSSI();
     select();
     SPI.transfer(REG_FIFO & 0x7F);
     PAYLOADLEN = SPI.transfer(0);
@@ -590,6 +578,8 @@ void RFM69::interruptHandler() {
     setMode(RF69_MODE_RX);    
     DATA[DATALEN] = 0; // add null at end of string // add null at end of string  
   }
+  RSSI = readRSSI();
+
 }
 
 
@@ -602,6 +592,9 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
 */
 bool RFM69::decodeSG1()
 {
+    int8_t _rssi = RSSI;
+
+    doTimestamp();
     //For keeping track of how much we trust the incoming timestamp
     uint8_t rxTimeTrust = 0;
 
@@ -617,13 +610,12 @@ bool RFM69::decodeSG1()
   
     if(golay_block_decode(tmpBuffer,rxHeader))
     {
-       debug("F2dh");
         return false;
     }
     //subtract 1 from header, to skip past the implicit length byte,
     //It now represents the length of DATA
     DATALEN=rxHeader[0]-1;
-    int8_t txRSSI = (rxHeader[2]& 0b00001111)-24;
+    int8_t txRSSI = ((rxHeader[2]& 0b00001111)*4)-24;
 
     //Buffer overflow prevention
     if(DATALEN>128)
@@ -634,8 +626,9 @@ bool RFM69::decodeSG1()
 
 
     //Check what kind of FEC we are supposed to be using.
-    if((rxHeader[1]& HEADER_FEC_FIELD) == 1)
+    if((rxHeader[1]& HEADER_FEC_FIELD))
     {
+      debug("fecr");
         //Full packet FEC mode. N
         for (uint8_t i = 0; i < (DATALEN-5); i+=6)
         {
@@ -643,7 +636,6 @@ bool RFM69::decodeSG1()
             //Decode all the 3 byte blocks into 6 byte blocks.
             if(golay_block_decode(DATA+i+5,tmpBuffer+(i/2)))
             {
-                debug("f643");
                 return false;
             }
             
@@ -675,8 +667,8 @@ bool RFM69::decodeSG1()
            bitDiffslt(rxBeacon,newPrivateWakeSequence,2)
           )
           {
-            rxPathLoss = txRSSI-readRSSI();
-            lastRx=millis();
+            rxPathLoss = txRSSI-_rssi;
+            lastRx=systemTime;
           }
           //The wake request flag is used to let them wake us up
           if( bitDiffslt(rxBeacon,privateWakeSequence,2)|  bitDiffslt(rxBeacon,newPrivateWakeSequence,2))
@@ -733,8 +725,6 @@ bool RFM69::decodeSG1()
       //we have to check its time
       if(isReply())
       {
-        debug("grmt");
-        debug(awaitReplyToIv[1]);
         chachapoly.addAuthData((awaitReplyToIv),8);
       }
       else
@@ -756,24 +746,21 @@ bool RFM69::decodeSG1()
           //application code.
           if((rxHeader[1]&HEADER_TYPE_FIELD) == HEADER_TYPE_UNRELIABLE)
           {
-
-            int64_t rxTimestamp=getPacketTimestamp();
-            int64_t diff;
-            diff=systemTime-rxTimestamp;
-            if (abs(diff) > (250000L))
+            int64_t diff=(getPacketTimestamp()-systemTime);
+            if (abs(diff) > (250000UL))
             {
               ///the reason we can do this automatically without corrupting state is
               //Replies can't be replied to, so sending this won't overwrite the value that
               //Says what we are watching for, if we were watching for something
+              debug("ofset");
+              debug((float)diff);
               sendSG1(tmpBuffer, 0, rxIV);
-              debug("rt");
-              debug(diff/1000000.0);
             }
           }
         }
 
         debug("Clock offset");
-        debug((getPacketTimestamp()-systemTime)/1000000.0);
+        debug((long)((getPacketTimestamp()-systemTime)/1000LL));
 
         if(getPacketTimestamp()<= channelTimestampHead)
         {
@@ -783,7 +770,7 @@ bool RFM69::decodeSG1()
         }
 
         //5 seconds max err
-        if(getPacketTimestamp()>= (systemTime+5000000L))
+        if(getPacketTimestamp()>= (systemTime+5000000LL))
           {
 
             debug("rtn");
@@ -793,7 +780,7 @@ bool RFM69::decodeSG1()
             return false;
           }
 
-        if(getPacketTimestamp()<= (systemTime-5000000L))
+        if(getPacketTimestamp()<= (systemTime-5000000LL))
           {
             debug("Rr2o");
             DATALEN=0;
@@ -819,23 +806,26 @@ bool RFM69::decodeSG1()
   
     
     debug("Ds, b0:");
-    debug(remainingDataLen-(3+8+8));
-    debug(tmpBuffer[3+8]);
+    debug(tmpBuffer[remainingDataLen-8]);
 
       if(!chachapoly.checkTag(tmpBuffer+(remainingDataLen-8),8))
       {
         debug("rbc");
-        debug(tmpBuffer[remainingDataLen-8]);
         DATALEN=0;
         return false;
       }
-      debug("tag");
+
+      rxPathLoss = txRSSI-_rssi;
+      lastRx=systemTime;
       //Remove the hint, IV, and MAC from the length
       //Store in the real data len so the user has it
       DATALEN=remainingDataLen-(3+8+8);
 
       //Add null terminator that's just kind of always there.
       DATA[DATALEN]=0;
+
+      //other things mess with that register
+      RSSI=_rssi;
 
       //Mark it so we don't accept old packets again.
       channelTimestampHead = getPacketTimestamp();
@@ -861,7 +851,6 @@ bool RFM69::decodeSG1()
     }
     else
     {
-      debug("Ihs");
       return false;
     }
 }
@@ -907,7 +896,7 @@ void RFM69::_rawSendBeacon(uint8_t power, bool wakeUp)
   }
 
   uint8_t header[3]={9,0,0};
-  header[2]=((power-(-24))/4);
+  header[2]=(((power-(-24))/4)&0b1111) ;
 
   header[1]|= _headerTimeTrust();
 
@@ -941,7 +930,7 @@ bool RFM69::sendBeaconSleep()
   {
     /* code */
   }
-  _rawSendBeacon(_getAutoTxPower(), false);
+  _rawSendBeacon(getAutoTxPower(), false);
   //Just long enough for one immediately sent
   delay(3);
 
@@ -985,9 +974,6 @@ void RFM69::setChannelKey(unsigned char * key) {
   //8 bytes total, first 4 are the hint sequence, next are the wake sequence.
    chachapoly.encrypt((uint8_t*)(&fixedHintSequence),input,3);
 
-
-    debug("Hint:");
-    debug(fixedHintSequence);
 
 }
 
@@ -1124,9 +1110,6 @@ void RFM69::getEntropy(int changes) {
   //Usable especially since we are always adding entropy from different sources.
 
 
-  debug("Seg");
-  debug(millis());
-
   int x=0;
   int y=0;
   for (int i=0;i<changes;i++)
@@ -1155,8 +1138,7 @@ void RFM69::getEntropy(int changes) {
     //That pool is gonna be SO stirred.
     mixEntropy();
   }
-  debug("Dge");
-  debug(millis());
+
 }
 
 bool RFM69::receivedReply()

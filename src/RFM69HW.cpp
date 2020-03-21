@@ -243,6 +243,8 @@ void RFM69::rawSetPowerLevel(int8_t powerLevel)
 
     powerLevel+=18;
   }
+  debug("pwr");
+  debug(powerLevel);
   writeReg(REG_PALEVEL, (readReg(REG_PALEVEL) & 0xE0) | powerLevel);
 }
 

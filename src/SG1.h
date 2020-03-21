@@ -234,7 +234,7 @@ class RFM69 {
 
     static void setTime(int64_t time, uint8_t trust= TIMETRUST_SECURE|TIMETRUST_CHALLENGERESPONSE|TIMETRUST_CLAIM_TRUST|TIMETRUST_ACCURATE);
     //When we last got a correct packet
-    unsigned long lastRx=0;
+    int64_t lastRx=0;
 
 
     uint8_t nodeID;
@@ -315,7 +315,8 @@ class RFM69 {
     void readAllRegsCompact();
     bool isRecieving();
 
-    unsigned long rxTime=0;
+    int64_t rxTime=0;
+    int8_t getAutoTxPower();
     
   protected:
     void _rawSendBeacon(uint8_t power, bool wakeUp);
@@ -324,7 +325,6 @@ class RFM69 {
     virtual void interruptHook(uint8_t CTLbyte) {};
     static volatile bool _haveData;
     virtual void sendFrame(const void* buffer, uint8_t size);
-    uint8_t _getAutoTxPower();
     void recalcBeaconBytes();
     void doPerPacketTimeFunctions(uint8_t rxTimeTrust);
     void initSystemTime();
@@ -368,5 +368,6 @@ void urandom(uint8_t * target, uint8_t len);
 
 #endif
 
-#define debug(x) Serial.println(x);Serial.flush()
-#define REGISTER_DETAIL
+//#define debug(x) Serial.println(x);Serial.flush()
+//#define REGISTER_DETAIL
+#define debug(x)
