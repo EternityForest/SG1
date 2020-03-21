@@ -305,8 +305,8 @@ void RFM69::rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8
 
     header[1]|= _headerTimeTrust();
 
-    //If the whole message would be more than 128 bytes we gave to turn off FEC
-    if (payloadSize>10)
+    //If the whole message would be big we have to turn off FEC
+    if (payloadSize>64)
     {
       useFEC=false;
     }
@@ -610,6 +610,7 @@ bool RFM69::decodeSG1()
   
     if(golay_block_decode(tmpBuffer,rxHeader))
     {
+        debug("badheader");
         return false;
     }
     //subtract 1 from header, to skip past the implicit length byte,
@@ -636,6 +637,7 @@ bool RFM69::decodeSG1()
             //Decode all the 3 byte blocks into 6 byte blocks.
             if(golay_block_decode(DATA+i+5,tmpBuffer+(i/2)))
             {
+                debug("badfec");
                 return false;
             }
             
@@ -760,7 +762,8 @@ bool RFM69::decodeSG1()
         }
 
         debug("Clock offset");
-        debug((long)((getPacketTimestamp()-systemTime)/1000LL));
+        doTimestamp();
+        debug((long)((getPacketTimestamp()-(rxTime-((PAYLOADLEN*bitTime)+400LL+400LL)))/1000LL));
 
         if(getPacketTimestamp()<= channelTimestampHead)
         {
