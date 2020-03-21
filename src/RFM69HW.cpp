@@ -24,7 +24,7 @@
 // Please maintain this license information along with authorship
 // and copyright notices in any redistribution of this code
 // **********************************************************************************
-#include "EverNet.h"
+#include "SG1.h"
 #include "RFM69registers.h"
 
 void initSystemTime();
@@ -85,12 +85,11 @@ bool RFM69::initialize(uint8_t freqBand,uint8_t networkID)
     /* 0x2F */ { REG_SYNCVALUE1, 0x2D },      // attempt to make this compatible with sync1 byte of RFM12B lib
     /* 0x30 */ { REG_SYNCVALUE2, 'E' }, // NETWORK ID
     //Use a repeated 2 bytes to hopefully be able to also support to CC1101
-    /* 0x31 */ { REG_SYNCVALUE3, '0x2D' },
-    /* 0x31 */ { REG_SYNCVALUE3, 'E' },
+    /* 0x31 */ { REG_SYNCVALUE3, 0x2D },
+              { REG_SYNCVALUE4, 'E' },
 
-    //* 0x31 */ { REG_SYNCVALUE4, 0xBB },
     /* 0x37 */ { REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_OFF | RF_PACKET1_CRC_OFF | RF_PACKET1_CRCAUTOCLEAR_OFF | RF_PACKET1_ADRSFILTERING_OFF },
-    /* 0x38 */ { REG_PAYLOADLENGTH, 126 }, // in variable length mode: the max frame size, not used in TX
+    /* 0x38 */ { REG_PAYLOADLENGTH, 128 }, // in variable length mode: the max frame size, not used in TX
     ///* 0x39 */ { REG_NODEADRS, nodeID }, // turned off because we're not using address filtering
     /* 0x3C */ { REG_FIFOTHRESH, RF_FIFOTHRESH_TXSTART_FIFONOTEMPTY | RF_FIFOTHRESH_VALUE }, // TX on FIFO not empty
     /* 0x3D */ { REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_2BITS | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF }, // RXRESTARTDELAY must match transmitter PA ramp-down time (bitrate dependent)
@@ -128,8 +127,13 @@ bool RFM69::initialize(uint8_t freqBand,uint8_t networkID)
     return false;
   attachInterrupt(_interruptNum, RFM69::isr0, RISING);
 
-  //initSystemTime();
+  initSystemTime();
   
+  //Speed up entropy with RX mode to use RSSI
+  setMode(RF69_MODE_RX);
+  getEntropy();
+  setMode(RF69_MODE_STANDBY);
+
 
   return true;
 }
@@ -198,24 +202,48 @@ void RFM69::sleep() {
 }
 
 
-//set this node's network id
+//set this node's network id. Always use repeat pattern for CC1101 compatibility
 void RFM69::setNetwork(uint8_t networkID)
 {
   writeReg(REG_SYNCVALUE2, networkID);
+  writeReg(REG_SYNCVALUE4, networkID);
 }
 
-// set *transmit/TX* output power: 0=min, 31=max
-// this results in a "weaker" transmitted signal, and directly results in a lower RSSI at the receiver
-// the power configurations are explained in the SX1231H datasheet (Table 10 on p21; RegPaLevel p66): http://www.semtech.com/images/datasheet/sx1231h.pdf
-// valid powerLevel parameter values are 0-31 and result in a directly proportional effect on the output/transmission power
-// this function implements 2 modes as follows:
-//       - for RFM69W the range is from 0-31 [-18dBm to 13dBm] (PA0 only on RFIO pin)
-//       - for RFM69HW the range is from 0-31 [5dBm to 20dBm]  (PA1 & PA2 on PA_BOOST pin & high Power PA settings - see section 3.3.7 in datasheet, p22)
-void RFM69::setPowerLevel(uint8_t powerLevel)
+
+
+void RFM69::setPowerLevel(int8_t powerLevel)
 {
-  _powerLevel = (powerLevel > 31 ? 31 : powerLevel);
-  if (_isRFM69HW) _powerLevel /= 2;
-  writeReg(REG_PALEVEL, (readReg(REG_PALEVEL) & 0xE0) | _powerLevel);
+  _powerLevel = powerLevel;
+
+  if(powerLevel>(-127))
+  {
+    rawSetPowerLevel(powerLevel);
+  }
+  else
+  {
+    rawSetPowerLevel(12);
+  }
+  
+}
+
+void RFM69::rawSetPowerLevel(int8_t powerLevel)
+{
+  if(_isRFM69HW)
+  {
+    powerLevel=min(20,powerLevel);
+    powerLevel=max(5,powerLevel);
+
+    //5db is the lowest
+    powerLevel-=5;
+  }
+  else
+  {
+    powerLevel=min(13,powerLevel);
+    powerLevel=max(-18,powerLevel);
+
+    powerLevel+=18;
+  }
+  writeReg(REG_PALEVEL, (readReg(REG_PALEVEL) & 0xE0) | powerLevel);
 }
 
 bool RFM69::canSend()
@@ -396,20 +424,7 @@ void RFM69::setCS(uint8_t newSPISlaveSelect) {
   pinMode(_slaveSelectPin, OUTPUT);
 }
 
-//for debugging
-#define REGISTER_DETAIL 1
-#if REGISTER_DETAIL
-// SERIAL PRINT
-// replace Serial.print("string") with SerialPrint("string")
-#define SerialPrint(x) SerialPrint_P(PSTR(x))
-void SerialWrite ( uint8_t c ) {
-    Serial.write ( c );
-}
 
-void SerialPrint_P(PGM_P str, void (*f)(uint8_t) = SerialWrite ) {
-  for (uint8_t c; (c = pgm_read_byte(str)); str++) (*f)(c);
-}
-#endif
 
 
 uint8_t RFM69::readTemperature(uint8_t calFactor) // returns centigrade

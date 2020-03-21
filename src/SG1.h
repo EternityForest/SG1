@@ -28,6 +28,15 @@
 #include <Arduino.h>            // assumes Arduino IDE v1.0 or greater
 #include <SPI.h>
 
+//Levels of time trust. OR the trust attributes together to get a trust level
+#define TIMETRUST_ACCURATE 1
+#define TIMETRUST_CLAIM_TRUST 2
+
+//Never set these two without CLAIM_TRUST, if they don't even claim trust
+//We obviously shouldn't
+#define TIMETRUST_SECURE 4
+#define TIMETRUST_CHALLENGERESPONSE 8
+
 //////////////////////////////////////////////////////////////////////
 //Platform and digitalPinToInterrupt definitions credit to RadioHead//
 //////////////////////////////////////////////////////////////////////
@@ -174,6 +183,8 @@
 #define NODEID_HANDHELD 5
 #define NODEID_ROBOT 6
 
+
+
 class RFM69 {
   public:
     static uint8_t DATA[RF69_MAX_DATA_LEN+1]; // RX/TX payload buffer, including end of string NULL char
@@ -196,6 +207,7 @@ class RFM69 {
     uint32_t privateHintSequence;
 
     uint32_t fixedHintSequence;
+    uint16_t bitTime=10;
 
 
 
@@ -217,13 +229,22 @@ class RFM69 {
     bool receivedReply();
     bool isReply();
 
+    uint32_t urandomRange(uint32_t, uint32_t);
+    void urandom(uint8_t *, uint8_t);
 
+    static void setTime(int64_t time, uint8_t trust= TIMETRUST_SECURE|TIMETRUST_CHALLENGERESPONSE|TIMETRUST_CLAIM_TRUST|TIMETRUST_ACCURATE);
     //When we last got a correct packet
     unsigned long lastRx=0;
 
 
     uint8_t nodeID;
 
+    void setNodeID(uint8_t x)
+    {
+      nodeID=x;
+    };
+
+  
 
     //Cached interval number for the privateHintSequence cache
     uint64_t intervalNumber;
@@ -245,8 +266,8 @@ class RFM69 {
     bool initialize(uint8_t freqBand, uint8_t networkID=1);
 
     void setNetwork(uint8_t networkID);
-    void getEntropy(int changes=512);
-    bool decodeEvernet();
+    void getEntropy(int changes=128);
+    bool decodeSG1();
     int64_t getPacketTimestamp();
 
     void setBitrate(uint32_t bps);
@@ -265,8 +286,8 @@ class RFM69 {
     void doBeacon();
     bool canSend();
     virtual void send(const void* buffer, uint8_t bufferSize);
-    virtual void sendEvernet(const void* buffer, uint8_t bufferSize,uint8_t * challenge=0);
-    virtual void rawSendEvernet(const void* buffer, uint8_t bufferSize, bool useFEC, int8_t txPower, uint8_t * useChallenge);
+    virtual void sendSG1(const void* buffer, uint8_t bufferSize,uint8_t * challenge=0);
+    virtual void rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8_t txPower, uint8_t * useChallenge);
 
     virtual bool receiveDone();
     bool ACKReceived(uint16_t fromNodeID);
@@ -280,7 +301,9 @@ class RFM69 {
     void spyMode(bool onOff=true);
     void promiscuous(bool onOff=true); //deprecated, replaced with spyMode()
     virtual void setHighPower(bool onOFF=true); // has to be called after initialize() for RFM69HW
-    virtual void setPowerLevel(uint8_t level); // reduce/increase transmit power level
+    virtual void setPowerLevel(int8_t level); // reduce/increase transmit power level
+    virtual void rawSetPowerLevel(int8_t level); // reduce/increase transmit power level
+
     void sleep();
     uint8_t readTemperature(uint8_t calFactor=0); // get CMOS temperature (8bit)
     void rcCalibration(); // calibrate the internal RC oscillator for use in wide temperature variations - see datasheet section [4.3.5. RC Timer Accuracy]
@@ -304,6 +327,9 @@ class RFM69 {
     uint8_t _getAutoTxPower();
     void recalcBeaconBytes();
     void doPerPacketTimeFunctions(uint8_t rxTimeTrust);
+    void initSystemTime();
+
+    uint8_t _headerTimeTrust();
 
 
     //Most recent timestamp that re have decoded.
@@ -317,7 +343,7 @@ class RFM69 {
     uint8_t _interruptNum;
     uint16_t _address;
     bool _spyMode;
-    uint8_t _powerLevel;
+    int8_t _powerLevel;
     bool _isRFM69HW;
 #if defined (SPCR) && defined (SPSR)
     uint8_t _SPCR;
@@ -343,3 +369,4 @@ void urandom(uint8_t * target, uint8_t len);
 #endif
 
 #define debug(x) Serial.println(x);Serial.flush()
+#define REGISTER_DETAIL

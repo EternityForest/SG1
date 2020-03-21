@@ -1,13 +1,23 @@
-#include "EverNet.h"
+#include "SG1.h"
 #include "RFM69registers.h"
+
+// SERIAL PRINT
+// replace Serial.print("string") with SerialPrint("string")
+#define SerialPrint(x) SerialPrint_P(PSTR(x))
+void SerialWrite ( uint8_t c ) {
+    Serial.write ( c );
+}
+
+void SerialPrint_P(PGM_P str, void (*f)(uint8_t) = SerialWrite ) {
+  for (uint8_t c; (c = pgm_read_byte(str)); str++) (*f)(c);
+}
 
 void RFM69::readAllRegs()
 {
   uint8_t regVal;
 
-#include "EverNet.h"
 
-#if REGISTER_DETAIL 
+#ifdef REGISTER_DETAIL 
   int capVal;
 
   //... State Variables for intelligent decoding
@@ -31,7 +41,9 @@ void RFM69::readAllRegs()
     Serial.print(" - ");
     Serial.println(regVal,BIN);
 
-#if REGISTER_DETAIL 
+#ifdef REGISTER_DETAIL 
+
+
     switch ( regAddr ) 
     {
         case 0x1 : {

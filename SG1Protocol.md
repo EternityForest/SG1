@@ -1,3 +1,9 @@
+## SG1 Protocol
+
+SG1 is a semi-secure protocol meant for low bandwidth applications. It passes
+blobs of bytes over encrypted channels, optionally using forward error correction to
+resist noise.
+
 
 ## Packet Structure
 
@@ -58,7 +64,7 @@ This is 8 bytes long, and it is the ChaChaPoly AEAD mac
 
 ## Beaconing
 
-We must periodically send a short beacon message. For this the hint must be the private hint sequence. Note that this is not authenticated, however it is slightly secure as they look like random data and can't be tracked easily.
+We must periodically send a short beacon message. For this the hint must be the private hint sequence. Note that this is not fully authenticated, however it is slightly secure as they look like random data and can't be tracked easily.
 
 We must continue listening for 3 milliseconds, to give other nodes an opportunity to wake us up with a beacon frame using the Private Wake Sequence.
 
@@ -66,6 +72,16 @@ This is secure, as we only get one try per beacon, and it is completely unpredic
 
 Hub devices should send their beacon within 1ms of recieving a beacon from the device. If the reciever is always-on, you can beacon whenever you want.
 
+
+## Use without a clock
+
+For simple things like RC cars, one device can set it's time to a random negative value(These are reserved for non-wallclock times), and may set it's time trusted and
+accurate flags, as it is effectively the master.
+
+This is not really that secure, over a few hundred reboots it's possible that
+the clock will at some point have a value that overlaps with some other time.
+
+However this is rather unlikely with things that don't get rebooted a lot.
 
 
 ## Auto TX power
@@ -79,4 +95,9 @@ We reject anything more than ten seconds old, or older than the newest packet we
 
 ## Initial Time Sync
 
-High powered devices should always send a reply to any message with a time that is more than 0.5s incorrect. 
+High powered always-on devices should always send a reply to any message with a time that is very inaccurate.
+
+This is the least secure part of the whole setup, because we are temporarily running
+in random-clock mode till the master gives us a timestamp.
+
+However, there is still 2**48 possible time values, reuse is unlikely-ish.
