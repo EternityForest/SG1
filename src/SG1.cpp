@@ -38,6 +38,16 @@ bool golay_block_decode(uint8_t * in, uint8_t * out);
 ChaChaPoly chachapoly;
 
 
+//WakeRequests keep track of channels that we want to send wake requests
+//to. This means we can send messages to channels keys other than our own.
+struct WakeRequest
+{
+  uint8_t trigger[3];
+  uint8_t wake[3];
+};
+
+struct WakeRequest wakeRequests[4];
+
 
 
 //Flags for byte 1 of the header.
@@ -96,30 +106,6 @@ void RFM69::initSystemTime()
 }
 static unsigned long systemTimeMicros=0;
 
-
-// Function to count number of set bits in n
-uint8_t bitDiffslt(uint32_t a, uint32_t b,uint8_t m)
-{
-	// stores the total bits set in n
-	int count = 0;
-  uint32_t n= a^b;
-
-	for (; n; count++)
-  {
-		n = n & (n - 1); // clear the least significant bit set
-    if(count>=m)
-    {
-      return 0;
-    }
-  }
-
-  if(count>=m)
-  {
-    return 0;
-  }
-
-	return true;
-}
 
 void doTimestamp()
 {
@@ -272,16 +258,21 @@ int8_t RFM69::getAutoTxPower()
   return txPower;
 }
 
-void RFM69::sendSG1(const void* buffer, uint8_t bufferSize, uint8_t * challenge)
+void RFM69::sendSG1(const void* buffer, uint8_t bufferSize, uint8_t * challenge, uint8_t * key)
 {
   doTimestamp();
-
   int8_t txPower= getAutoTxPower();
-  rawSendSG1(buffer, bufferSize, txPower>10, txPower,challenge);
-
+  rawSendSG1(buffer, bufferSize, txPower>10, txPower,challenge, key);
 }
 
-void RFM69::rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8_t txPower, uint8_t * useChallenge)
+void RFM69::sendSG1Reply(const void* buffer, uint8_t bufferSize)
+{
+  doTimestamp();
+  int8_t txPower= getAutoTxPower();
+  rawSendSG1(buffer, bufferSize, txPower>10, txPower,rxIV, 0);
+}
+
+void RFM69::rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8_t txPower, uint8_t * useChallenge, uint8_t * key)
 { 
     //The length of everything after the initial 6 byte block
     //8 byte IV, 8 byte MAC, 3 byte channel hint
@@ -356,8 +347,15 @@ void RFM69::rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8
     header[0]=payloadSize+6;
     
     chachapoly.clear();
-    chachapoly.setKey(channelKey,32);
-
+    if(key==0)
+    {
+      chachapoly.setKey(channelKey,32);
+    }
+    else
+    {
+      chachapoly.setKey(key,32);
+    }
+    
     doTimestamp();
     
 
@@ -598,6 +596,13 @@ bool RFM69::decodeSG1()
     //For keeping track of how much we trust the incoming timestamp
     uint8_t rxTimeTrust = 0;
 
+    //SG1 packets can't be shorter than this.
+    if(DATALEN<9)
+    {
+      debug("tooshort");
+      return false;
+    }
+
     //First byte is the actual length from the framing, which includes itself
     tmpBuffer[0]=PAYLOADLEN;
 
@@ -607,6 +612,7 @@ bool RFM69::decodeSG1()
 
    //Copy evrything in the header but the length nyte we already have
     memcpy(tmpBuffer+1, DATA, 5);
+
   
     if(golay_block_decode(tmpBuffer,rxHeader))
     {
@@ -624,6 +630,7 @@ bool RFM69::decodeSG1()
         DATALEN=128;
     }
     
+
 
 
     //Check what kind of FEC we are supposed to be using.
@@ -658,23 +665,25 @@ bool RFM69::decodeSG1()
     //the brief channel hints
     if(DATALEN==3)
       {
-        recalcBeaconBytes();
+          recalcBeaconBytes();
           //Pad with 0, only 3 bytes
           tmpBuffer[3]=0;
 
           uint32_t rxBeacon = ((uint32_t *)(tmpBuffer))[0];
-          if(bitDiffslt(rxBeacon,privateHintSequence,2) |
-           bitDiffslt(rxBeacon,privateWakeSequence,2) |
-          bitDiffslt(rxBeacon,newPrivateHintSequence,2) |
-           bitDiffslt(rxBeacon,newPrivateWakeSequence,2)
+          if((rxBeacon==privateHintSequence) |
+           (rxBeacon==privateWakeSequence) |
+           (rxBeacon==newPrivateHintSequence) |
+           (rxBeacon==newPrivateWakeSequence)
           )
           {
             rxPathLoss = txRSSI-_rssi;
             lastRx=systemTime;
+            debug("chbeacon");
           }
           //The wake request flag is used to let them wake us up
-          if( bitDiffslt(rxBeacon,privateWakeSequence,2)|  bitDiffslt(rxBeacon,newPrivateWakeSequence,2))
-          {
+          if( (rxBeacon==privateWakeSequence)|  (rxBeacon==newPrivateWakeSequence))
+          {            
+            debug("chwake");
             wakeRequestFlag=1;
           }
           debug("Just a beacon");
@@ -748,8 +757,8 @@ bool RFM69::decodeSG1()
           //application code.
           if((rxHeader[1]&HEADER_TYPE_FIELD) == HEADER_TYPE_UNRELIABLE)
           {
-            int64_t diff=(getPacketTimestamp()-systemTime);
-            if (abs(diff) > (250000UL))
+            int64_t diff=(getPacketTimestamp()-((rxTime-((PAYLOADLEN*bitTime)+400LL+400LL))));
+            if (abs(diff) > (250000LL))
             {
               ///the reason we can do this automatically without corrupting state is
               //Replies can't be replied to, so sending this won't overwrite the value that
@@ -889,14 +898,15 @@ uint8_t RFM69::_headerTimeTrust()
 
   return x;
 }
-void RFM69::_rawSendBeacon(uint8_t power, bool wakeUp)
+void RFM69::sendBeacon(bool wakeUp)
 {
   recalcBeaconBytes();
-
+  int8_t power = getAutoTxPower();
   while(power%4)
   {
     power++;
   }
+  rawSetPowerLevel(power);
 
   uint8_t header[3]={9,0,0};
   header[2]=(((power-(-24))/4)&0b1111) ;
@@ -933,7 +943,7 @@ bool RFM69::sendBeaconSleep()
   {
     /* code */
   }
-  _rawSendBeacon(getAutoTxPower(), false);
+  sendBeacon();
   //Just long enough for one immediately sent
   delay(3);
 
@@ -981,29 +991,69 @@ void RFM69::setChannelKey(unsigned char * key) {
 }
 
 
+void RFM69::setProfile(uint8_t profile)
+{
+  switch (profile)
+  {
+  case RF_PROFILE_GFSK1200:
+    setBitrate(1200);
+    setDeviation(10000);
+    setChannelFilter(25000);
+    setChannelSpacing(50000);
+    break;
+
+  case RF_PROFILE_GFSK4800:
+    setBitrate(4800);
+    setDeviation(25000);
+    setChannelFilter(55000);
+    setChannelSpacing(100000);
+    break;
+
+  case RF_PROFILE_GFSK10K:
+    setBitrate(10000);
+    setDeviation(25000);
+    setChannelFilter(55000);
+    setChannelSpacing(100000);
+    break;
+
+  case RF_PROFILE_GFSK38K:
+    setBitrate(38400);
+    setDeviation(50000);
+    setChannelFilter(150000);
+    setChannelSpacing(200000);
+    break;
+
+  case RF_PROFILE_GFSK100K:
+    setBitrate(100000);
+    setDeviation(100000);
+    setChannelFilter(200000);
+    setChannelSpacing(250000);
+    break;
+
+  case RF_PROFILE_GFSK250K:
+    setBitrate(250000);
+    setDeviation(125000);
+    setChannelFilter(500000);
+    setChannelSpacing(250000);
+    break;
+
+  default:
+    break;
+  }
+
+}
+
+void RFM69::setChannelSpacing(uint32_t hz)
+{
+  channelSpacing = hz/1000L;
+  //Recalc the channel number
+  setChannelNumber(channelNumber);
+}
+
 
 void RFM69::setBitrate(uint32_t bps)
 {
- //Attempt to guess a good filter width.
-  setChannelFilter(2*((bps/2) + bps));
-
   bitTime= 1000000L/bps;
-
-  //Let's go for a modulation index of 1
-  if(bps>10000)
-  {
-    setDeviation(bps);
-  }
-  else
-  {
-    //Our minimum FDev is 10khz,
-    //There is no reason to go below this,
-    //We cannot get channel spacing better than our
-    //Crystal accuracy
-    setDeviation(15000);
-  }
-  
-
   bps = 32000000UL/bps;
   writeReg(REG_BITRATEMSB, bps/256);
   writeReg(REG_BITRATELSB,bps%256);
@@ -1013,50 +1063,57 @@ void RFM69::setDeviation(uint32_t hz)
 {
   //Round to nearest by adding half the fstep
   hz+=30;
-
   hz/=61;
 
   writeReg(REG_FDEVMSB, hz/256);
   writeReg(REG_FDEVLSB,hz%256);
 }
 
-
-
 //Approximately set the RX bandwidth, rounding up to the next step
-//The channel spacing is the filter bandwidth plus 50khz, rounded down
-//To the nearest 50KHz
-
-//Possible spacings: 100,150,250,250,500
 void RFM69::setChannelFilter(uint32_t hz)
 {
-  if(hz<=50000)
+
+  if(hz<=12500)
   {
-    channelSpacing = 100;
+    //12.5khz half spacing.
+    //Only 10kkz guard band! I think this will still wodk though.
+    writeReg(REG_RXBW,RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_20 | RF_RXBW_EXP_6);
+  }
+
+  if(hz<=25000)
+  {
+    //12.5khz half spacing.
+    //Only 10kkz guard band! I think this will still wodk though.
+    writeReg(REG_RXBW,RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_20 | RF_RXBW_EXP_5);
+  }
+
+  else if(hz<=50000)
+  {
     writeReg(REG_RXBW,RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_20 | RF_RXBW_EXP_4);
+  }
+  else if(hz<=62000)
+  {
+    writeReg(REG_RXBW,RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_16 | RF_RXBW_EXP_4);
   }
   else if(hz<=100000)
   {
-    channelSpacing = 150;
+    //100KHz
     writeReg(REG_RXBW,RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_20 | RF_RXBW_EXP_3);
   }
   else if(hz<=200000)
   {
-    channelSpacing = 250;
+    //200KHz
     writeReg(REG_RXBW,RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_20 | RF_RXBW_EXP_2);
   }
   else if(hz<=330000)
   {
-    channelSpacing = 350;
+    //332KHz
     writeReg(REG_RXBW,RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_24 | RF_RXBW_EXP_1);
   } 
   else
   {
-    channelSpacing = 500;
     writeReg(REG_RXBW,RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_16 | RF_RXBW_EXP_1);
   }
-
-  //Recalc the channel number
-  setChannelNumber(channelNumber);
 }
 
 //Set the RF channel. If the channel is higher than the actual

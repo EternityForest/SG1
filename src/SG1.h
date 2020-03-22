@@ -255,6 +255,9 @@ class RFM69 {
     //Send a beacon and check for the wake message.
     //Return True on wake message, else turn radio off(call recieveDone to wake)
     bool sendBeaconSleep();
+
+    void sendBeacon(bool wakeup=false);
+
     void encrypt(const char * key);
 
 
@@ -272,11 +275,14 @@ class RFM69 {
 
     void setBitrate(uint32_t bps);
     void setChannelFilter(uint32_t bps);
+    void setProfile(uint8_t profile);
+    void setChannelSpacing(uint32_t hz);
+
     void setDeviation(uint32_t hz);
     void setChannelNumber(uint16_t ch);
 
     //Width of a channel in khz includig padding
-    uint16_t channelSpacing=250;
+    uint16_t channelSpacing=350;
     uint16_t channelNumber=1;
 
     uint8_t freqBand = 0;
@@ -285,9 +291,16 @@ class RFM69 {
 
     void doBeacon();
     bool canSend();
+
+    //Sends a raw RFM69 packet.
     virtual void send(const void* buffer, uint8_t bufferSize);
-    virtual void sendSG1(const void* buffer, uint8_t bufferSize,uint8_t * challenge=0);
-    virtual void rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8_t txPower, uint8_t * useChallenge);
+
+    //Sends an SG1 protocol packet
+    virtual void sendSG1(const void* buffer, uint8_t bufferSize,uint8_t * challenge=0, uint8_t * key=0);
+    virtual void rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8_t txPower, uint8_t * useChallenge, uint8_t * key=0);
+
+    virtual void sendSG1Reply(const void* buffer, uint8_t bufferSize);
+
 
     virtual bool receiveDone();
     bool ACKReceived(uint16_t fromNodeID);
@@ -319,7 +332,6 @@ class RFM69 {
     int8_t getAutoTxPower();
     
   protected:
-    void _rawSendBeacon(uint8_t power, bool wakeUp);
     static void isr0();
     void interruptHandler();
     virtual void interruptHook(uint8_t CTLbyte) {};
@@ -362,12 +374,19 @@ class RFM69 {
 };
 
 
+#define RF_PROFILE_GFSK1200 1
+#define RF_PROFILE_GFSK4800 2
+#define RF_PROFILE_GFSK10K 3
+#define RF_PROFILE_GFSK38K 4
+#define RF_PROFILE_GFSK100K 5
+#define RF_PROFILE_GFSK250K 6
+
 
 uint32_t urandomRange(uint32_t f, uint32_t t);
 void urandom(uint8_t * target, uint8_t len);
 
 #endif
 
-//#define debug(x) Serial.println(x);Serial.flush()
+#define debug(x) Serial.println(x);Serial.flush()
 //#define REGISTER_DETAIL
-#define debug(x)
+//#define debug(x)
