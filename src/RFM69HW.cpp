@@ -258,7 +258,8 @@ int32_t RFM69::getFEI()
 
 bool RFM69::canSend()
 {
-  if (_mode == RF69_MODE_RX && PAYLOADLEN == 0 && readRSSI() < CSMA_LIMIT) // if signal stronger than -100dBm is detected assume channel activity
+  // if signal stronger than -100dBm is detected assume channel activity
+  if (_mode == RF69_MODE_RX && PAYLOADLEN == 0 && readRSSI() < CSMA_LIMIT) 
   {
     setMode(RF69_MODE_STANDBY);
     return true;
@@ -407,7 +408,7 @@ void RFM69::spyMode(bool onOff) {
 }
 
 void RFM69::promiscuous(bool onOff) {
-  Serial.println("\nRFM69::promiscuous(bool): DEPRECATED, use spyMode(bool) instead!\n");
+  Serial.println("\nRFM69::promiscuous(bool): DEPRECATED, use spyMode(bool)!\n");
   spyMode(onOff);
 }
 

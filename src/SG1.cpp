@@ -83,6 +83,10 @@ static union
   uint64_t entropyRegister;
 };
 
+//The non-secure RNG we use for packet timings
+static uint32_t rngState;
+
+
 static union
 {
 //UNIX time in microseconds
@@ -164,6 +168,17 @@ static void mixEntropy()
   //We don't use the auth tag
 }
 
+
+uint32_t RFM69::xorshift32()
+{
+	/* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */
+  rngState+=micros();
+  rngState ^= rngState << 13;
+	rngState ^= rngState >> 17;
+	rngState ^= rngState << 5;
+	return rngState;
+}
+
 uint32_t RFM69::urandomRange(uint32_t f, uint32_t t)
 {
 
@@ -194,7 +209,9 @@ void RFM69::urandom(uint8_t * target, uint8_t len)
 
   chachapoly.setKey(entropyPool, 20);
   chachapoly.setIV(systemTimeBytes,8);
-  //Copy bytes 32 at a time, re-stirring the pool every time.
+  //Copy bytes 20 at a time. Note that
+  //We never reveal the raw content of the entropy pool for any reason.
+  //We just use the encrypted keystream XORed with the pool
   while(len)
   {
     int x = len;
@@ -451,7 +468,12 @@ void RFM69::send(const void* buffer, uint8_t bufferSize)
 {
   writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFB) | RF_PACKET2_RXRESTART); // avoid RX deadlocks
   uint32_t now = millis();
-  while (!canSend() && millis() - now < RF69_CSMA_LIMIT_MS) receiveDone();
+  while (!canSend() && millis() - now < RF69_CSMA_LIMIT_MS)
+  {
+    //8ms seems like a reasonable length to use for CSMA.
+    delayMicroseconds(xorshift32()& 8192L);
+    receiveDone();
+  }
   sendFrame(buffer, bufferSize+1);
 }
 
@@ -1222,7 +1244,6 @@ void RFM69::getEntropy(int changes) {
     //That pool is gonna be SO stirred.
     mixEntropy();
   }
-
 }
 
 bool RFM69::receivedReply()

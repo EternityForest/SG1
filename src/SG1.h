@@ -269,6 +269,7 @@ class RFM69 {
     void getEntropy(int changes=128);
     bool decodeSG1();
     int64_t getPacketTimestamp();
+    uint32_t xorshift32();
 
     int32_t getFEI();
 

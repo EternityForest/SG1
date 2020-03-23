@@ -102,7 +102,12 @@ Send a raw message. No additional framing at all gets added here. Length is the 
 Send an SG1 message, giving you (unproven)encryption, TX power control, and automat FEC as needed. Works exactly like send, you just
 have to decode first. Adds 25 bytes to every message, and doubles payload size if the signal is very weak(Due to the error correction used to increase range).
 
+Note that up to 2 extra padding bytes may be added if the system decides Golay encoding is needed.
 
+
+### radio.xorshift32()
+Simple non-secure 32 bit random number generator used for internal backoff timings. Reseeded automatically, and fast, 
+but not secure.
 
 
 
