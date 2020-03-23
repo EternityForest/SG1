@@ -51,7 +51,7 @@ bool RFM69::initialize(uint8_t freqBand,uint8_t networkID)
   const uint8_t CONFIG[][2] =
   {
     /* 0x01 */ { REG_OPMODE, RF_OPMODE_SEQUENCER_ON | RF_OPMODE_LISTEN_OFF | RF_OPMODE_STANDBY },
-    /* 0x02 */ { REG_DATAMODUL, RF_DATAMODUL_DATAMODE_PACKET | RF_DATAMODUL_MODULATIONTYPE_FSK | RF_DATAMODUL_MODULATIONSHAPING_01 },
+    /* 0x02 */ { REG_DATAMODUL, RF_DATAMODUL_DATAMODE_PACKET | RF_DATAMODUL_MODULATIONTYPE_FSK | RF_DATAMODUL_MODULATIONSHAPING_10 },
     
     /* 0x03 */ { REG_BITRATEMSB, RF_BITRATEMSB_100000},
     /* 0x04 */ { REG_BITRATELSB, RF_BITRATELSB_100000},
@@ -95,6 +95,7 @@ bool RFM69::initialize(uint8_t freqBand,uint8_t networkID)
     /* 0x3D */ { REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_2BITS | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF }, // RXRESTARTDELAY must match transmitter PA ramp-down time (bitrate dependent)
     //for BR-19200: /* 0x3D */ { REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_NONE | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF }, // RXRESTARTDELAY must match transmitter PA ramp-down time (bitrate dependent)
     /* 0x6F */ { REG_TESTDAGC, RF_DAGC_IMPROVED_LOWBETA0 }, // run DAGC continuously in RX mode for Fading Margin Improvement, recommended default for AfcLowBetaOn=0
+              {REG_AFCFEI, RF_AFCFEI_AFCAUTO_ON|RF_AFCFEI_AFCAUTOCLEAR_ON},
     {255, 0}
   };
 
@@ -246,6 +247,13 @@ void RFM69::rawSetPowerLevel(int8_t powerLevel)
   debug("pwr");
   debug(powerLevel);
   writeReg(REG_PALEVEL, (readReg(REG_PALEVEL) & 0xE0) | powerLevel);
+}
+
+int32_t RFM69::getFEI()
+{
+  int16_t x= readReg(REG_FEILSB);
+  x+= readReg(REG_FEIMSB);
+  return x*61;
 }
 
 bool RFM69::canSend()

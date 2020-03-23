@@ -107,12 +107,25 @@ void RFM69::initSystemTime()
 static unsigned long systemTimeMicros=0;
 
 
-void doTimestamp()
+
+
+void doTimestamp(int16_t adjustment=0)
 {
   //Set systemTime to the correct value by adding the micros.
+  //Adjustment adds up to that many micros but will never make the clock go
+  //backwards.
   noInterrupts();
   unsigned long x=micros();
-  systemTime += (x-systemTimeMicros);
+  unsigned long x2= x-systemTimeMicros;
+  int64_t y = x2-adjustment;
+  
+  //Clock doesn't go backwards except when actually set.
+  if(y<0)
+  {
+    y=0;
+  }
+
+  systemTime += y;
   systemTimeMicros=x;
 
   //If it has been ten minutes since accurate setting,
@@ -130,7 +143,11 @@ void doTimestamp()
   interrupts();
 }
 
-
+int64_t RFM69::micros()
+{
+  doTimestamp();
+  return systemTime;
+}
 
 //WARNING: Possible bad crypto!! This entropy pool 
 //Is entirely about using less code space, that is why it just encrypts the
@@ -196,7 +213,7 @@ void RFM69::urandom(uint8_t * target, uint8_t len)
 }
 
 
-static void RFM69::setTime(int64_t time, uint8_t trust)
+void RFM69::setTime(int64_t time, uint8_t trust)
 {
   noInterrupts();
   //Special value 0 indicates we keep the current time and only set the trust 
@@ -208,7 +225,6 @@ static void RFM69::setTime(int64_t time, uint8_t trust)
   }
   systemTimeTrust=trust;
   interrupts();
-  mixEntropy();
 }
 
 uint8_t RFM69::DATA[RF69_MAX_DATA_LEN+1];
@@ -421,7 +437,10 @@ void RFM69::rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8
 
 
     //+1 skip the length  byte that is already part of the RFM69 raw framing that the lib handles at a lower level.
-    send(tmpBuffer+1, header[0]);
+   
+    //Similarly subtract one from the number, because send expects the actual data len
+    //exculding the length byte itself
+    send(tmpBuffer+1, header[0]-1);
 }
 
 
@@ -433,7 +452,7 @@ void RFM69::send(const void* buffer, uint8_t bufferSize)
   writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFB) | RF_PACKET2_RXRESTART); // avoid RX deadlocks
   uint32_t now = millis();
   while (!canSend() && millis() - now < RF69_CSMA_LIMIT_MS) receiveDone();
-  sendFrame(buffer, bufferSize);
+  sendFrame(buffer, bufferSize+1);
 }
 
 uint8_t rxHeader[8];
@@ -505,7 +524,6 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
     int64_t rxTimestamp=getPacketTimestamp();
     int64_t diff;
 
-
     //Gonna subtract the data time, the preamble, and the sync bytes
     //at 100kbps. We want the start time.
 
@@ -518,8 +536,7 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
     //If we trust this packet more than the clock,
     //Set the clock from this.
 
-    //If time is not set, this allows a replay attack.
-    if((rxTimeTrust>=systemTimeTrust) & (rxTimeTrust>=TIMETRUST_SECURE))
+    if((rxTimeTrust>=systemTimeTrust) & (rxTimeTrust>=TIMETRUST_CHALLENGERESPONSE) )
     {
       //data+4 is node ID, the rest of the IV is the time.
       if(( (rxTimeTrust & TIMETRUST_ACCURATE) || (abs(diff)>100000LL)))
@@ -544,11 +561,15 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
         lastAccurateTimeSet=systemTime;
       }
     }
-
-
-    
-
-
+    else if ((rxTimeTrust& TIMETRUST_ACCURATE) && (rxTimeTrust&&TIMETRUST_SECURE))
+    {
+      if (abs(diff) <30000L)
+      {
+        //We can do very small adjustments continually, whenever we get a
+        //new packet
+        doTimestamp(diff);
+      }
+    }
 }
 // internal function - interrupt gets called when a packet is received
 void RFM69::interruptHandler() {
@@ -758,7 +779,9 @@ bool RFM69::decodeSG1()
           if((rxHeader[1]&HEADER_TYPE_FIELD) == HEADER_TYPE_UNRELIABLE)
           {
             int64_t diff=(getPacketTimestamp()-((rxTime-((PAYLOADLEN*bitTime)+400LL+400LL))));
-            if (abs(diff) > (250000LL))
+            //We are going to try to maintain tight timing
+            //25ms is the limit before we tell them
+            if (abs(diff) > (25000LL))
             {
               ///the reason we can do this automatically without corrupting state is
               //Replies can't be replied to, so sending this won't overwrite the value that
@@ -1018,9 +1041,9 @@ void RFM69::setProfile(uint8_t profile)
 
   case RF_PROFILE_GFSK38K:
     setBitrate(38400);
-    setDeviation(50000);
-    setChannelFilter(150000);
-    setChannelSpacing(200000);
+    setDeviation(80000);
+    setChannelFilter(200000);
+    setChannelSpacing(250000);
     break;
 
   case RF_PROFILE_GFSK100K:
@@ -1034,7 +1057,7 @@ void RFM69::setProfile(uint8_t profile)
     setBitrate(250000);
     setDeviation(125000);
     setChannelFilter(500000);
-    setChannelSpacing(250000);
+    setChannelSpacing(500000);
     break;
 
   default:
@@ -1143,6 +1166,7 @@ void RFM69::setChannelNumber(uint16_t n)
   
   freq = minf+(((long)channelSpacing*1000L)/2);
 
+  
   while(n)
   {
     freq += ((long)channelSpacing*1000L);

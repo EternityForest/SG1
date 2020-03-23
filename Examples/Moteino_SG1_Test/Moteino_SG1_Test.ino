@@ -59,14 +59,14 @@ void setup()
 
   //RX filter bandwidth and deviation are automatically set
   //when you do this. Channel spacing is also calculated automatically.
-  radio.setProfile(RF_PROFILE_GFSK4800);
+  radio.setProfile(RF_PROFILE_GFSK250K);
 
   //This channel number determines the actual RF frequency. Set it to anything you
   //Want, the library knows how to wrap around if you go over the top channel.
-  radio.setChannelNumber(41);
+  radio.setChannelNumber(150);
 
   //Manual, use -127 to set automatic.
-  radio.setPowerLevel(-18);
+  radio.setPowerLevel(11);
 
   //Show state of module
   //radio.readAllRegs();
@@ -147,6 +147,8 @@ void loop()
 
     Serial.print("], RSSI ");
     Serial.println(radio.RSSI);
+    Serial.print("FEI: ");
+    Serial.println(radio.getFEI());
     
     if(radio.decodeSG1())
     {

@@ -225,6 +225,7 @@ class RFM69 {
     //IV, including timestamp
     uint8_t rxIV[8];
 
+    static int64_t micros();
 
     bool receivedReply();
     bool isReply();
@@ -260,10 +261,6 @@ class RFM69 {
 
     void encrypt(const char * key);
 
-
-    RFM69(uint8_t slaveSelectPin, uint8_t interruptPin, bool isRFM69HW, uint8_t interruptNum) //interruptNum is now deprecated
-                : RFM69(slaveSelectPin, interruptPin, isRFM69HW){};
-
     RFM69(uint8_t slaveSelectPin=RF69_SPI_CS, uint8_t interruptPin=RF69_IRQ_PIN, bool isRFM69HW=false);
 
     bool initialize(uint8_t freqBand, uint8_t networkID=1);
@@ -272,6 +269,8 @@ class RFM69 {
     void getEntropy(int changes=128);
     bool decodeSG1();
     int64_t getPacketTimestamp();
+
+    int32_t getFEI();
 
     void setBitrate(uint32_t bps);
     void setChannelFilter(uint32_t bps);
@@ -387,6 +386,6 @@ void urandom(uint8_t * target, uint8_t len);
 
 #endif
 
-#define debug(x) Serial.println(x);Serial.flush()
+//#define debug(x) Serial.println(x);Serial.flush()
 //#define REGISTER_DETAIL
-//#define debug(x)
+#define debug(x)
