@@ -104,6 +104,22 @@ have to decode first. Adds 25 bytes to every message, and doubles payload size i
 
 Note that up to 2 extra padding bytes may be added if the system decides Golay encoding is needed.
 
+### radio.sendSG1Reply(uint8_t * data, uint8_t len)
+
+Same as sendSG1, but sends as a reply to the last message recieved. You can reply to anything, except a reply.
+
+### radio.sendSG1Request(uint8_t * data, uint8_t len)
+
+Same as sendSG1, but marks as requesting a reply. There is no automatic replies or retransmission, because we want
+to avoid wasting bandwidth on messages that are only acknowledgements, so we let you do your own replies.
+
+### radio.isReply(), radio.isRequest()
+
+Call after decoding to learn what kind of message this is.
+
+### radio.receivedReply()
+Returns true if the most recent non-reply you sent has beed replied to. You can safely send a reply
+while listening for one, but you can only be listening for a reply to one packet at a time.
 
 ### radio.xorshift32()
 Simple non-secure 32 bit random number generator used for internal backoff timings. Reseeded automatically, and fast, 

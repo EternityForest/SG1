@@ -24,8 +24,20 @@ If 01, the entire rest of the packet must be golay encoded, padding the payload 
 True if the sender's time has been set from a trusted source
 ##### 3: TIME_ACCURATE
 True if time is "accurate" by whatever definition the channel uses
-##### 4: IS_REPLY
-True if this is a reply to the last message sent on the channel
+
+
+##### 4-7: PACKET_TYPE
+Reply messages have bit 7 set.
+
+//No reply is asked for
+#define HEADER_TYPE_UNRELIABLE    0b0010000
+//Reply requested
+#define HEADER_TYPE_RELIABLE      0b0100000
+//This is a reply
+#define HEADER_TYPE_REPLY         0b1000000
+//This is a "special" type with reserved system meaning
+#define HEADER_TYPE_REPLY_SPECIAL 0b1010000
+
 
 #### Status(1 byte)
 0-3: TX RSSI before antenna gain(4db increments starting at -24db)
@@ -53,14 +65,19 @@ This is the device's Node ID, followed by 7 bytes of the current time, in 256us 
 ### Payload(Not present in Beacon messages)
 ChaCha20 encrypted using the channel key. The IV is the IV of the message.
 
-The associated data is the 3 bytes of header after FEC decoding, followed by the IV of the message we are responding to, if this is
-a reply.
+The associated data is the 3 bytes of header after FEC decoding, followed by the IV of the message we are responding to, if this is a reply or special reply.
 
 
 
 ### MAC(Not present in Beacon messages)
 This is 8 bytes long, and it is the ChaChaPoly AEAD mac
 
+## Special packets
+
+If a SPECIAL_REPLY packet is empty, it exists entirely to set the clock
+on the other device.
+
+In generaal, special packets should not be passed to user code.
 
 ## Beaconing
 

@@ -20,9 +20,9 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#include "BigNumberUtil.h"
-#include "utility/EndianUtil.h"
-#include "utility/LimbUtil.h"
+#include "utility/rweather/BigNumberUtil.h"
+#include "utility/rweather/EndianUtil.h"
+#include "utility/rweather/LimbUtil.h"
 #include <string.h>
 
 /**

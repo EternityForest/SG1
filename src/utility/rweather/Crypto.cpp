@@ -20,7 +20,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#include "Crypto.h"
+#include "utility/rweather/Crypto.h"
 
 /**
  * \brief Cleans a block of bytes.

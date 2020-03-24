@@ -22,8 +22,8 @@
 
 #include "Poly1305.h"
 #include "Crypto.h"
-#include "utility/EndianUtil.h"
-#include "utility/LimbUtil.h"
+#include "EndianUtil.h"
+#include "LimbUtil.h"
 #include <string.h>
 
 /**

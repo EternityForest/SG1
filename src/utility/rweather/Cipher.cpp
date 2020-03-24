@@ -20,7 +20,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#include "Cipher.h"
+#include "utility/rweather/Cipher.h"
 
 /**
  * \class Cipher Cipher.h <Cipher.h>

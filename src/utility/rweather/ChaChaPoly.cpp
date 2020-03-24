@@ -22,7 +22,7 @@
 
 #include "ChaChaPoly.h"
 #include "Crypto.h"
-#include "utility/EndianUtil.h"
+#include "EndianUtil.h"
 #include <string.h>
 
 /**

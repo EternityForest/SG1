@@ -32,23 +32,22 @@
 #include "utility/rweather/Crypto.h"
 #include "utility/rweather/ChaChaPoly.h"
 
+#include "utility/rweather/CryptoLW.h"
+#include "utility/rweather/Crypto.h"
+#include "utility/rweather/SpeckTiny.h"
+#include "utility/rweather/EAX.h"
+#include "utility/rweather/Curve25519.h"
+
+//#include <string.h>
+
 void golay_block_encode(uint8_t * in, uint8_t * out);
 bool golay_block_decode(uint8_t * in, uint8_t * out);
 
-ChaChaPoly chachapoly;
-
-
-//WakeRequests keep track of channels that we want to send wake requests
-//to. This means we can send messages to channels keys other than our own.
-struct WakeRequest
-{
-  uint8_t trigger[3];
-  uint8_t wake[3];
-};
-
-struct WakeRequest wakeRequests[4];
-
-
+//Leaving all this in, just in case someone wants to make 
+//Some crazy ultralight variant. For now, I think ChaCha is the better choice,
+//Because it's easier to find implementations
+//EAX<SpeckTiny> cipherContext;
+ChaChaPoly cipherContext;
 
 //Flags for byte 1 of the header.
 #define HEADER_FEC_FIELD 0b11
@@ -65,11 +64,13 @@ struct WakeRequest wakeRequests[4];
 #define HEADER_TIME_ACCURATE_FIELD 0b1000
 
 //This bit indicates if the packet is a reply
-#define HEADER_TYPE_FIELD 0b110000
+#define HEADER_TYPE_FIELD         0b1110000
 
-#define HEADER_TYPE_UNRELIABLE 0b010000
-#define HEADER_TYPE_RELIABLE 0b100000
-#define HEADER_TYPE_REPLY 0b110000
+#define HEADER_TYPE_UNRELIABLE    0b0010000
+#define HEADER_TYPE_RELIABLE      0b0100000
+//Any other reply types will always have this one set
+#define HEADER_TYPE_REPLY         0b1000000
+#define HEADER_TYPE_REPLY_SPECIAL 0b1010000
 
 
 
@@ -81,11 +82,18 @@ static union
 {
   uint8_t entropyPool[20];
   uint64_t entropyRegister;
+
+  //BAD CRYPTO ALERT!!!
+  //This is shared with a totally insecure RNG
+  //This leaks small amounts of information about
+  //these 32 bits. This should normally not matter,
+  //As we re-encrypt the entire pool both before and after use
+  uint32_t entropyRegister32;
 };
 
 //The non-secure RNG we use for packet timings
-static uint32_t rngState;
-
+//static uint32_t rngState;
+#define rngState entropyRegister32
 
 static union
 {
@@ -147,7 +155,7 @@ void doTimestamp(int16_t adjustment=0)
   interrupts();
 }
 
-int64_t RFM69::micros()
+int64_t RFM69::unixMicros()
 {
   doTimestamp();
   return systemTime;
@@ -161,10 +169,10 @@ int64_t RFM69::micros()
 //On account of the fact we are essentially XORing the state with something
 static void mixEntropy()
 {
-  chachapoly.setKey(entropyPool, 20);
+  cipherContext.setKey(entropyPool, 20);
   doTimestamp();
-  chachapoly.setIV(systemTimeBytes,8);
-  chachapoly.encrypt(entropyPool,entropyPool, 20);
+  cipherContext.setIV(systemTimeBytes,8);
+  cipherContext.encrypt(entropyPool,entropyPool, 20);
   //We don't use the auth tag
 }
 
@@ -201,14 +209,20 @@ void RFM69::urandom(uint8_t * target, uint8_t len)
   //That way, no information about the pool itself is ever leaked to
   //the destination.
 
-  chachapoly.clear();
 
-  //Take a reading to further do some mixing.
+ //Take a reading to further do some mixing.
   entropyRegister+=readTemperature();
   entropyRegister^=readRSSI();
 
-  chachapoly.setKey(entropyPool, 20);
-  chachapoly.setIV(systemTimeBytes,8);
+  //Mix entropy before we actually use it, so that we don't
+  //get any reuse with the non-secure uses of the pool.
+  mixEntropy();
+
+  cipherContext.clear();
+ 
+
+  cipherContext.setKey(entropyPool, 20);
+  cipherContext.setIV(systemTimeBytes,8);
   //Copy bytes 20 at a time. Note that
   //We never reveal the raw content of the entropy pool for any reason.
   //We just use the encrypted keystream XORed with the pool
@@ -220,7 +234,7 @@ void RFM69::urandom(uint8_t * target, uint8_t len)
       x=20;
     }
    
-    chachapoly.encrypt(target, entropyPool, x);
+    cipherContext.encrypt(target, entropyPool, x);
     len-=x;
     target+=x;
   }
@@ -229,6 +243,10 @@ void RFM69::urandom(uint8_t * target, uint8_t len)
   mixEntropy();
 }
 
+void RFM69::addEntropy(uint32_t x)
+{
+  entropyRegister32+=x;
+}
 
 void RFM69::setTime(int64_t time, uint8_t trust)
 {
@@ -265,6 +283,8 @@ int8_t RFM69::getAutoTxPower()
   {
     return _powerLevel;
   }
+
+
   //If we have a message in the last 3 minutes, that means that we can
   //use TX power control
   if(lastRx>(systemTime-(3L*60L*1000L*1000LL)))
@@ -275,6 +295,11 @@ int8_t RFM69::getAutoTxPower()
     {
       txPower++;
     }
+
+    
+    //For every failed or canceled request that's happened, add 3db of power.
+    txPower+= min(requestedReply*3,12);
+  
 
     //When we've gone as high as we can go, then we turn on the FEC for an extra boost
     //Pretty sure 12db is legal in most countries, so let's maybe not go above that without
@@ -295,17 +320,28 @@ void RFM69::sendSG1(const void* buffer, uint8_t bufferSize, uint8_t * challenge,
 {
   doTimestamp();
   int8_t txPower= getAutoTxPower();
-  rawSendSG1(buffer, bufferSize, txPower>10, txPower,challenge, key);
+  //Reset the failed request tracking
+  requestedReply=0;
+  rawSendSG1(buffer, bufferSize, txPower>10, txPower,challenge, key, HEADER_TYPE_UNRELIABLE);
+}
+
+void RFM69::sendSG1Request(const void* buffer, uint8_t bufferSize)
+{
+  doTimestamp();
+  int8_t txPower= getAutoTxPower();
+  requestedReply+=1;
+  rawSendSG1(buffer, bufferSize, txPower>10, txPower,0, 0,HEADER_TYPE_RELIABLE);
 }
 
 void RFM69::sendSG1Reply(const void* buffer, uint8_t bufferSize)
 {
   doTimestamp();
   int8_t txPower= getAutoTxPower();
-  rawSendSG1(buffer, bufferSize, txPower>10, txPower,rxIV, 0);
+  rawSendSG1(buffer, bufferSize, txPower>10, txPower,rxIV, 0, HEADER_TYPE_REPLY);
 }
 
-void RFM69::rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8_t txPower, uint8_t * useChallenge, uint8_t * key)
+void RFM69::rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8_t txPower, 
+uint8_t * useChallenge, uint8_t * key, uint8_t packetType)
 { 
     //The length of everything after the initial 6 byte block
     //8 byte IV, 8 byte MAC, 3 byte channel hint
@@ -322,10 +358,9 @@ void RFM69::rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8
      *
      */
     uint8_t header[3]={0,0,0};
-    if(useChallenge==0)
-    {
-      header[1] |= HEADER_TYPE_UNRELIABLE;
-    }
+  
+    header[1] |= packetType;
+    
 
     header[1]|= _headerTimeTrust();
 
@@ -379,14 +414,14 @@ void RFM69::rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8
     //Add the 6 bytes for the header itself.
     header[0]=payloadSize+6;
     
-    chachapoly.clear();
+    cipherContext.clear();
     if(key==0)
     {
-      chachapoly.setKey(channelKey,32);
+      cipherContext.setKey(channelKey,32);
     }
     else
     {
-      chachapoly.setKey(key,32);
+      cipherContext.setKey(key,32);
     }
     
     doTimestamp();
@@ -404,7 +439,7 @@ void RFM69::rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8
     smallBuffer[3]=nodeID;
 
     //Skip hint sequence to get to the IV
-    chachapoly.setIV(smallBuffer+3,8);
+    cipherContext.setIV(smallBuffer+3,8);
 
 
     //Keep track of the challenge so we can get replies, but
@@ -414,23 +449,18 @@ void RFM69::rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8
       memcpy(awaitReplyToIv, smallBuffer+3,8);
     }
 
-    if(useChallenge)
-    {
-      header[1] |= HEADER_TYPE_REPLY;
-    }
-
-    chachapoly.addAuthData(header,3);
+    cipherContext.addAuthData(header,3);
 
     if(useChallenge)
     {
-      chachapoly.addAuthData(useChallenge,8);
+      cipherContext.addAuthData(useChallenge,8);
     }
 
 
     //Leave room for hint and IV
-    chachapoly.encrypt((uint8_t *)smallBuffer+3+8, (uint8_t *)buffer, bufferSize);
+    cipherContext.encrypt((uint8_t *)smallBuffer+3+8, (uint8_t *)buffer, bufferSize);
     //memcpy((uint8_t *)smallBuffer+3+8, (uint8_t *)buffer, bufferSize);
-    chachapoly.computeTag(smallBuffer+3+8+bufferSize,8);
+    cipherContext.computeTag(smallBuffer+3+8+bufferSize,8);
 
     debug("Enc tag,b0");
     debug(smallBuffer[3+8+bufferSize]);
@@ -464,18 +494,6 @@ void RFM69::rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8
 
 
 
-void RFM69::send(const void* buffer, uint8_t bufferSize)
-{
-  writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFB) | RF_PACKET2_RXRESTART); // avoid RX deadlocks
-  uint32_t now = millis();
-  while (!canSend() && millis() - now < RF69_CSMA_LIMIT_MS)
-  {
-    //8ms seems like a reasonable length to use for CSMA.
-    delayMicroseconds(xorshift32()& 8192L);
-    receiveDone();
-  }
-  sendFrame(buffer, bufferSize+1);
-}
 
 uint8_t rxHeader[8];
 
@@ -510,22 +528,22 @@ void RFM69::recalcBeaconBytes() {
   newPrivateHintSequence=0;
   newPrivateWakeSequence=0;
 
-  chachapoly.clear();
-  chachapoly.setKey(channelKey,32);
-  chachapoly.setIV(IV,8);
+  cipherContext.clear();
+  cipherContext.setKey(channelKey,32);
+  cipherContext.setIV(IV,8);
 
   //8 bytes total, first 4 are the hint sequence, next are the wake sequence.
-  chachapoly.encrypt((uint8_t*)&newPrivateHintSequence,input,3);
-  chachapoly.encrypt((uint8_t*)&newPrivateWakeSequence,input,3);
+  cipherContext.encrypt((uint8_t*)&newPrivateHintSequence,input,3);
+  cipherContext.encrypt((uint8_t*)&newPrivateWakeSequence,input,3);
 
   //Now calc the old. They may be the same, that's fine.
-  chachapoly.clear();
-  chachapoly.setKey(channelKey,32);
-  chachapoly.setIV(oldIV,8);
+  cipherContext.clear();
+  cipherContext.setKey(channelKey,32);
+  cipherContext.setIV(oldIV,8);
 
   //8 bytes total, first 4 are the hint sequence, next are the wake sequence.
-  chachapoly.encrypt((uint8_t*)&privateHintSequence,input,3);
-  chachapoly.encrypt((uint8_t*)&privateWakeSequence,input,3);
+  cipherContext.encrypt((uint8_t*)&privateHintSequence,input,3);
+  cipherContext.encrypt((uint8_t*)&privateWakeSequence,input,3);
 
 }
 
@@ -593,35 +611,6 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
       }
     }
 }
-// internal function - interrupt gets called when a packet is received
-void RFM69::interruptHandler() {
-    
-  if (_mode == RF69_MODE_RX && (readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PAYLOADREADY))
-  {
-    wakeRequestFlag=0;
-
-    doTimestamp();
-    rxTime = systemTime;
-    setMode(RF69_MODE_STANDBY);
-    select();
-    SPI.transfer(REG_FIFO & 0x7F);
-    PAYLOADLEN = SPI.transfer(0);
-    debug(PAYLOADLEN);
-
-  
-    for (uint8_t i = 0; i < (PAYLOADLEN-1); i++)
-    {
-        DATA[i]=SPI.transfer(0);
-    }
-    DATALEN = PAYLOADLEN-1;
-    
-    unselect();
-    setMode(RF69_MODE_RX);    
-    DATA[DATALEN] = 0; // add null at end of string // add null at end of string  
-  }
-  RSSI = readRSSI();
-
-}
 
 
 /*
@@ -631,7 +620,7 @@ Our channel.
 
 If True, DATA and DATALEN will be the decoded and decrypted payload.
 */
-bool RFM69::decodeSG1()
+bool RFM69::decodeSG1(uint8_t * key)
 {
     int8_t _rssi = RSSI;
 
@@ -649,9 +638,6 @@ bool RFM69::decodeSG1()
     //First byte is the actual length from the framing, which includes itself
     tmpBuffer[0]=PAYLOADLEN;
 
-    //Both the packet time and the RSSI are unpredictable.
-    entropyRegister+=RSSI;
-    entropyRegister+= micros();
 
    //Copy evrything in the header but the length nyte we already have
     memcpy(tmpBuffer+1, DATA, 5);
@@ -769,17 +755,17 @@ bool RFM69::decodeSG1()
       //Based on the timestamp of the previous message.
       //We do that by adding in the authentication data.
 
-      chachapoly.clear();
-      chachapoly.setKey(channelKey,32);
-      chachapoly.setIV(rxIV,8);
+      cipherContext.clear();
+      cipherContext.setKey(channelKey,32);
+      cipherContext.setIV(rxIV,8);
 
-      chachapoly.addAuthData(rxHeader,3);
+      cipherContext.addAuthData(rxHeader,3);
       
       //If it is not a reply, it has no challenge response properties and therefore
       //we have to check its time
       if(isReply())
       {
-        chachapoly.addAuthData((awaitReplyToIv),8);
+        cipherContext.addAuthData((awaitReplyToIv),8);
       }
       else
       {
@@ -796,28 +782,31 @@ bool RFM69::decodeSG1()
         //Don't bother to send stuff if we don't have a valid clock.
         if(systemTimeTrust >= TIMETRUST_CHALLENGERESPONSE)
         {
-          //Don't send replies if they actually requested one, leave that to
-          //application code.
-          if((rxHeader[1]&HEADER_TYPE_FIELD) == HEADER_TYPE_UNRELIABLE)
-          {
             int64_t diff=(getPacketTimestamp()-((rxTime-((PAYLOADLEN*bitTime)+400LL+400LL))));
             //We are going to try to maintain tight timing
-            //25ms is the limit before we tell them
-            if (abs(diff) > (25000LL))
+            //50ms is the limit before we tell them
+            //Can't reply to a reply
+            if ((abs(diff) > (25000LL)) &&(!isReply()))
             {
+
+              //Don't send replies if they actually requested one, leave that to
+              //application code.
+              //However, should the packet be more than 5s off, we can't pass this to application
+              //code anyway
+              if(((rxHeader[1]&HEADER_TYPE_FIELD) == HEADER_TYPE_UNRELIABLE) || 
+              (abs(diff)>5000000LL))
+              {
               ///the reason we can do this automatically without corrupting state is
               //Replies can't be replied to, so sending this won't overwrite the value that
               //Says what we are watching for, if we were watching for something
               debug("ofset");
               debug((float)diff);
-              sendSG1(tmpBuffer, 0, rxIV);
+              int8_t autoPwr = getAutoTxPower();
+              rawSendSG1(tmpBuffer, 0, autoPwr>10, autoPwr,rxIV,0,HEADER_TYPE_REPLY_SPECIAL);
             }
           }
         }
 
-        debug("Clock offset");
-        doTimestamp();
-        debug((long)((getPacketTimestamp()-(rxTime-((PAYLOADLEN*bitTime)+400LL+400LL)))/1000LL));
 
         if(getPacketTimestamp()<= channelTimestampHead)
         {
@@ -859,13 +848,13 @@ bool RFM69::decodeSG1()
     //Encrypted part starts after the 3 byte hint and 8 byte IV, since we already
     //Took off the header.
     //It also *ends* before the IV, so we subtract 3+8+8
-    chachapoly.decrypt(DATA, tmpBuffer+3+8,remainingDataLen-(3+8+8));
+    cipherContext.decrypt(DATA, tmpBuffer+3+8,remainingDataLen-(3+8+8));
   
     
     debug("Ds, b0:");
     debug(tmpBuffer[remainingDataLen-8]);
 
-      if(!chachapoly.checkTag(tmpBuffer+(remainingDataLen-8),8))
+      if(!cipherContext.checkTag(tmpBuffer+(remainingDataLen-8),8))
       {
         debug("rbc");
         DATALEN=0;
@@ -884,6 +873,8 @@ bool RFM69::decodeSG1()
       //other things mess with that register
       RSSI=_rssi;
 
+      
+
       //Mark it so we don't accept old packets again.
       channelTimestampHead = getPacketTimestamp();
       //Don't trust if there's no trust flag even if it is authenticated
@@ -900,10 +891,19 @@ bool RFM69::decodeSG1()
       if(isReply())
       {
         memset(awaitReplyToIv,0,8);
+        requestedReply=0;
       }
       
       doPerPacketTimeFunctions(rxTimeTrust);
       
+      if(isSpecialType())
+      {
+        /*HANDLE SYSTEM RESERVED PACKETS*/
+        debug("sp");
+        DATALEN=0;
+        return false;
+      }
+
      return true;
     }
     else
@@ -978,32 +978,48 @@ void RFM69::sendBeacon(bool wakeUp)
     header[1] |= HEADER_FEC_GOLAY;
     header[0]=12;
   }
+
+
+  uint32_t now = millis();
+  while (!canSend() && millis() - now < RF69_CSMA_LIMIT_MS)
+  {
+    //Wake messages have to be sent immediately.
+    if(wakeUp==false)
+    {
+      //8ms seems like a reasonable length to use for CSMA.
+      delayMicroseconds(xorshift32()& 8192L);
+    }
+    _receiveDone();
+  }
+
   //SendFrame does the length byte for you
   sendFrame(tmpBuffer+1, header[0]);
+  
 }
 
-bool RFM69::sendBeaconSleep()
+//Send a beacon and see if anyone tells us to wake up.
+bool RFM69::checkBeaconSleep()
 {
-  while (!canSend())
-  {
-    /* code */
-  }
   sendBeacon();
-  //Just long enough for one immediately sent
-  delay(3);
-
-  if(receiveDone())
+  //Just long enough for bit time. We count by ms
+  for(long i=0;i<(bitTime*(40+40+60+30)*2); i+=1000)
   {
-    if(wakeRequestFlag)
+    delay(1);
+    if(receiveDone())
     {
-      return 1;
-    }
-    else
-    {
-      sleep();
+      if(decodeSG1())
+      {
+        if(wakeRequestFlag)
+        {
+          return 1;
+        }
+        else
+        {
+          sleep();
+        }
+      }
     }
   }
-
   return 0;
 }
 
@@ -1025,12 +1041,12 @@ void RFM69::setChannelKey(unsigned char * key) {
   //Ensure byte 3 is set to zero, it's a padding byte
   fixedHintSequence=0;
   
-  chachapoly.clear();
-  chachapoly.setKey(channelKey,32);
-  chachapoly.setIV(IV,8);
+  cipherContext.clear();
+  cipherContext.setKey(channelKey,32);
+  cipherContext.setIV(IV,8);
 
   //8 bytes total, first 4 are the hint sequence, next are the wake sequence.
-   chachapoly.encrypt((uint8_t*)(&fixedHintSequence),input,3);
+   cipherContext.encrypt((uint8_t*)(&fixedHintSequence),input,3);
 
 
 }
@@ -1255,7 +1271,27 @@ bool RFM69::receivedReply()
 
 bool RFM69::isReply()
 {
-  if((rxHeader[1]&HEADER_TYPE_FIELD)==HEADER_TYPE_REPLY)
+  if(
+    ((rxHeader[1]&HEADER_TYPE_FIELD)==HEADER_TYPE_REPLY) ||
+    ((rxHeader[1]&HEADER_TYPE_FIELD)==HEADER_TYPE_REPLY_SPECIAL)
+  )
+  {
+    return 1;
+  }
+  return 0;
+}
+
+bool RFM69::isSpecialType()
+{
+  if((rxHeader[1]&HEADER_TYPE_FIELD)==HEADER_TYPE_REPLY_SPECIAL)
+  {
+    return true;
+  }
+  return false;
+}
+bool RFM69::isRequest()
+{
+  if((rxHeader[1]&HEADER_TYPE_FIELD)==HEADER_TYPE_RELIABLE)
   {
     return 1;
   }

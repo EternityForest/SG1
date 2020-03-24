@@ -5,20 +5,6 @@
 // http://LowPowerLab.com/contact
 // Modified for RFM69HCW by Mike Grusin, 4/16
 
-// This sketch will show you the basics of using an
-// RFM69HCW radio module. SparkFun's part numbers are:
-// 915MHz: https://www.sparkfun.com/products/12775
-// 434MHz: https://www.sparkfun.com/products/12823
-
-// See the hook-up guide for wiring instructions:
-// https://learn.sparkfun.com/tutorials/rfm69hcw-hookup-guide
-
-// Uses the RFM69 library by Felix Rusu, LowPowerLab.com
-// Original library: https://www.github.com/lowpowerlab/rfm69
-// SparkFun repository: https://github.com/sparkfun/RFM69HCW_Breakout
-
-// Include the RFM69 and SPI libraries:
-
 #include <SG1.h>
 #include "LowPower.h"
 
@@ -76,32 +62,27 @@ void setup()
 
 
   //Set a random time. This allows things to work without a clock, but it makes the whole thing subject to replay attacks,
-  //should the random time values ever overlap.  
-  
+  //should the random time values ever overlap.
+
   //In practice this would require many reboots of the system to work as an attack,
   // And so is almost certainly fine for home automation, weather stations, and the like,
   //In addition. the "selection" of replayable values would be limited to about a ten second window of matching packets.
   radio.setTime(null);
 
-  //The encryption key used both for actual encryption, and also for message filtering. 
+  //The encryption key used both for actual encryption, and also for message filtering.
   //Many devices can share a channel, the library will ignore messages for other channels.
-  
+
   radio.setChannelKey((uint8_t *)key);
 
   Serial.println(radio.readRSSI());
 
-  Serial.println(radio.urandomRange(1,100));
-  Serial.println(radio.urandomRange(1,100));
-  Serial.println(radio.urandomRange(1,100));
-  Serial.println(radio.urandomRange(1,100));
-  Serial.println(radio.urandomRange(1,100));
-  Serial.println(radio.urandomRange(1,100));
-  Serial.println(radio.urandomRange(1,100));
-  Serial.println(radio.urandomRange(1,100));
-
+  //RNG demo
+  Serial.println(radio.urandomRange(1, 100));
 }
 
 unsigned long last = 0;
+uint8_t attempts = 10;
+
 
 void loop()
 {
@@ -111,19 +92,56 @@ void loop()
   const char * pl2 = "One Ring to Find Them\0\0";
 
   //LowPower.idle(SLEEP_15MS, ADC_OFF, TIMER2_ON, TIMER1_ON, TIMER0_ON,
-//                SPI_ON, USART0_ON, TWI_OFF);
-  if ((millis() - last) > 3000)
+  //                SPI_ON, USART0_ON, TWI_OFF);
+
+
+  //Ever 3 seconds, send a request message. Also send every 100 milliseconds if we haven't got a reply yet
+  if ( ((millis() - last) > 3000))
   {
 
     //radio.send((uint8_t *)pl, strlen(pl));
-    radio.sendSG1((uint8_t *)pl, strlen(pl));
+    radio.sendSG1Request((uint8_t *)pl, strlen(pl));
 
     last = millis();
     Serial.print("Sent, TX pwr:");
     Serial.println(radio.getAutoTxPower());
+
+    //Read the background noise level.
     Serial.print("BGN:");
     Serial.println(radio.readRSSI());
+    Serial.print("System clock: ");
+    Serial.println((int32_t)(radio.unixMicros()/1000000LL));
+    Serial.println("");
   }
+
+
+  //If we have not gotten a reply, we are going to
+  //Retry once every ten seconds.
+  else if (!radio.receivedReply())
+  {
+    if ((millis() - last) > 500)
+    {
+      //Limit 10 attempts to resend
+      if (attempts)
+      {
+        attempts -= 1;
+        //radio.send((uint8_t *)pl, strlen(pl));
+        radio.sendSG1Request((uint8_t *)pl, strlen(pl));
+        last = millis();
+        Serial.println("Retry");
+      }
+    }
+  }
+
+  // now we are "connected" so we can reset the counter and enable retries
+  if (radio.receivedReply())
+  {
+    attempts = 10;
+  }
+
+
+
+
 
 
   // RECEIVING
@@ -147,23 +165,33 @@ void loop()
 
     Serial.print("], RSSI ");
     Serial.println(radio.RSSI);
+
+    //This is the FEI, a measure of the of frequency error
+    //between sender and reciever
     Serial.print("FEI: ");
     Serial.println(radio.getFEI());
-    
-    if(radio.decodeSG1())
+
+    if (radio.decodeSG1())
     {
       Serial.print("SG1 Decoded: [");
 
-    // The actual message is contained in the DATA array,
-    // and is DATALEN bytes in size:
+      // The actual message is contained in the DATA array,
+      // and is DATALEN bytes in size:
 
-    for (byte i = 0; i < radio.DATALEN; i++)
-      Serial.print((char)radio.DATA[i]);
+      for (byte i = 0; i < radio.DATALEN; i++)
+        Serial.print((char)radio.DATA[i]);
 
-    // RSSI is the "Receive Signal Strength Indicator",
-    // smaller numbers mean higher power.
+      // RSSI is the "Receive Signal Strength Indicator",
+      // smaller numbers mean higher power.
 
-    Serial.println("]");
+      Serial.println("]");
+
+      if (radio.isRequest())
+      {
+        //Send an empty message in response.
+        radio.sendSG1Reply(0, 0);
+        Serial.println("Sent reply");
+      }
     }
   }
 }

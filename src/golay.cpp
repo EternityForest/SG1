@@ -54,8 +54,9 @@
    I've seen cunning implementations of this which only use one table. That
    technique doesn't seem to work with these numbers though.
 */
+#include <avr/pgmspace.h>
 
-static const uint32_t golay_encode_matrix[12] = {
+static const uint32_t PROGMEM golay_encode_matrix[12] = {
     0xC75,
     0x49F,
     0xD4B,
@@ -70,7 +71,7 @@ static const uint32_t golay_encode_matrix[12] = {
     0xE3A,
 };
 
-static const uint32_t golay_decode_matrix[12] = {
+static const uint32_t PROGMEM golay_decode_matrix[12] = {
    0x49F,
    0x93E,
    0x6E3,
@@ -106,7 +107,7 @@ static uint32_t golay_coding(uint32_t w)
 
     for( i = 0; i<12; i++ ) {
         if( w & 1<<i )
-            out ^= golay_encode_matrix[i];
+            out ^= pgm_read_dword(&(golay_encode_matrix[i]));
     }
     return out;
 }
@@ -127,7 +128,7 @@ static uint32_t golay_decoding(uint32_t w)
 
     for( i = 0; i<12; i++ ) {
         if( w & 1<<(i) )
-            out ^= golay_decode_matrix[i];
+            out ^= pgm_read_dword(&(golay_decode_matrix[i]));
     }
     return out;
 }
@@ -189,7 +190,7 @@ int32_t golay_errors(uint32_t codeword)
 
     for( i = 0; i<12; i++ ) {
         uint32_t error = 1<<i;
-        uint32_t coding_error = golay_encode_matrix[i];
+        uint32_t coding_error = pgm_read_dword(&(golay_encode_matrix[i]));
         if( weight12(syndrome^coding_error) <= 2 ) {
             return (int32_t)((((uint32_t)(syndrome^coding_error))<<12) | (uint32_t)error) ;
         }
@@ -222,7 +223,7 @@ int32_t golay_errors(uint32_t codeword)
      * bits; as before we try each of the bits in the parity in turn */
     for( i = 0; i<12; i++ ) {
         uint32_t error = 1<<i;
-        uint32_t coding_error = golay_decode_matrix[i];
+        uint32_t coding_error = pgm_read_dword(&(golay_decode_matrix[i]));
         if( weight12(inv_syndrome^coding_error) <= 2 ) {
             uint32_t error_word = ((uint32_t)(inv_syndrome^coding_error)) | ((uint32_t)error)<<12;
             return (int32_t)error_word;

@@ -195,6 +195,10 @@ class RFM69 {
 
     uint8_t channelKey[32];
 
+    //Used for keeping track of active wake requests.
+    uint8_t numWakeRequests=0;
+    struct WakeRequest * wakeRequests =0;
+
 
     //Thie hint sequences for 3 seconds ago.
     //We have to keep old and new, because the clocks are not to be
@@ -225,10 +229,13 @@ class RFM69 {
     //IV, including timestamp
     uint8_t rxIV[8];
 
-    static int64_t micros();
+    //UNIX timestamp micros
+    static int64_t unixMicros();
 
     bool receivedReply();
     bool isReply();
+
+    bool isRequest();
 
     uint32_t urandomRange(uint32_t, uint32_t);
     void urandom(uint8_t *, uint8_t);
@@ -255,7 +262,7 @@ class RFM69 {
 
     //Send a beacon and check for the wake message.
     //Return True on wake message, else turn radio off(call recieveDone to wake)
-    bool sendBeaconSleep();
+    bool checkBeaconSleep();
 
     void sendBeacon(bool wakeup=false);
 
@@ -267,7 +274,7 @@ class RFM69 {
 
     void setNetwork(uint8_t networkID);
     void getEntropy(int changes=128);
-    bool decodeSG1();
+    bool decodeSG1(uint8_t * key=0);
     int64_t getPacketTimestamp();
     uint32_t xorshift32();
 
@@ -292,15 +299,21 @@ class RFM69 {
     void doBeacon();
     bool canSend();
 
+
+  
+
     //Sends a raw RFM69 packet.
     virtual void send(const void* buffer, uint8_t bufferSize);
 
     //Sends an SG1 protocol packet
     virtual void sendSG1(const void* buffer, uint8_t bufferSize,uint8_t * challenge=0, uint8_t * key=0);
-    virtual void rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8_t txPower, uint8_t * useChallenge, uint8_t * key=0);
+    
+    //Default is unreliable type
+    virtual void rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8_t txPower, uint8_t * useChallenge, uint8_t * key=0,
+    uint8_t packetType= 0b0010000);
 
     virtual void sendSG1Reply(const void* buffer, uint8_t bufferSize);
-
+    virtual void sendSG1Request(const void* buffer, uint8_t bufferSize);
 
     virtual bool receiveDone();
     bool ACKReceived(uint16_t fromNodeID);
@@ -331,6 +344,8 @@ class RFM69 {
     int64_t rxTime=0;
     int8_t getAutoTxPower();
     
+    void addEntropy(uint32_t x);
+
   protected:
     static void isr0();
     void interruptHandler();
@@ -340,8 +355,22 @@ class RFM69 {
     void recalcBeaconBytes();
     void doPerPacketTimeFunctions(uint8_t rxTimeTrust);
     void initSystemTime();
+    virtual bool _receiveDone();
+
 
     uint8_t _headerTimeTrust();
+    bool _recieveDone();
+    bool isSpecialType();
+
+    //Lets us do _recieveDone in the internal loop but
+    //mark the packet as unhandled to return it to the user later
+    //when they call recieveDone
+    bool handled=false;
+
+    //Increment when requesting, zero this out when you get a reply
+    //Or send a message that doesn't request one.
+    //It's used to track failed requests so we can increase power appropriately.
+    uint8_t requestedReply=0;
 
 
     //Most recent timestamp that re have decoded.
@@ -390,3 +419,12 @@ void urandom(uint8_t * target, uint8_t len);
 //#define debug(x) Serial.println(x);Serial.flush()
 //#define REGISTER_DETAIL
 #define debug(x)
+
+
+//WakeRequests keep track of channels that we want to send wake requests
+//to. This means we can send messages to channels keys other than our own.
+struct WakeRequest
+{
+  uint8_t trigger[3];
+  uint8_t wake[3];
+};

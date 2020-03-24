@@ -252,7 +252,7 @@ void RFM69::rawSetPowerLevel(int8_t powerLevel)
 int32_t RFM69::getFEI()
 {
   int16_t x= readReg(REG_FEILSB);
-  x+= readReg(REG_FEIMSB);
+  x+= readReg(REG_FEIMSB)*256L;
   return x*61;
 }
 
@@ -267,6 +267,20 @@ bool RFM69::canSend()
   return false;
 }
 
+void RFM69::send(const void* buffer, uint8_t bufferSize)
+{
+  writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFB) | RF_PACKET2_RXRESTART); // avoid RX deadlocks
+  uint32_t now = millis();
+  while (!canSend() && millis() - now < RF69_CSMA_LIMIT_MS)
+  {
+    //8ms seems like a reasonable length to use for CSMA.
+    delayMicroseconds(xorshift32()& 8192L);
+    //Underscore doesn't mark things as handled, we can still return
+    //the packet to the user when they call the non-underscore version.
+    _receiveDone();
+  }
+  sendFrame(buffer, bufferSize+1);
+}
 
 
 // internal function
@@ -313,7 +327,7 @@ void RFM69::receiveBegin() {
 
 
 // checks if a packet was received and/or puts transceiver in receive (ie RX or listen) mode
-bool RFM69::receiveDone() {
+bool RFM69::_receiveDone() {
   if (_haveData) {
   	_haveData = false;
   	interruptHandler();
@@ -321,6 +335,11 @@ bool RFM69::receiveDone() {
   if (_mode == RF69_MODE_RX && PAYLOADLEN > 0)
   {
     setMode(RF69_MODE_STANDBY); // enables interrupts
+    //Until the user actually calls the real
+    //function, this is marked as unhandled,
+    //preventing the user API 
+    //from calling this a
+    handled=false;
     return true;
   }
   else if (_mode == RF69_MODE_RX) // already in RX no payload yet
@@ -331,6 +350,54 @@ bool RFM69::receiveDone() {
   return false;
 }
 
+bool RFM69::receiveDone() {
+  
+  //If there is an unhandled packet, tell
+  //the user about that instead of just trashing it.
+  if(PAYLOADLEN>0 && (handled==false))
+  {
+    handled=true;
+    return true;
+  }
+
+  //No pending packets mean we can check for new stuff.
+  bool x= _receiveDone();
+
+  //Set the flag that says we are handling it
+  handled = true;
+  return x;
+} 
+
+// internal function - interrupt gets called when a packet is received
+void RFM69::interruptHandler() {
+    
+  if (_mode == RF69_MODE_RX && (readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PAYLOADREADY))
+  {
+    wakeRequestFlag=0;
+    rxTime = unixMicros();
+    setMode(RF69_MODE_STANDBY);
+    select();
+    SPI.transfer(REG_FIFO & 0x7F);
+    PAYLOADLEN = SPI.transfer(0);
+    debug(PAYLOADLEN);
+
+  
+    for (uint8_t i = 0; i < (PAYLOADLEN-1); i++)
+    {
+        DATA[i]=SPI.transfer(0);
+    }
+    DATALEN = PAYLOADLEN-1;
+    
+    unselect();
+    setMode(RF69_MODE_RX);    
+    DATA[DATALEN] = 0; // add null at end of string // add null at end of string  
+  }
+  RSSI = readRSSI();
+  
+  //Both the packet time and the RSSI are unpredictable.
+  addEntropy(RSSI);
+  addEntropy(micros());
+}
 
 
 // get the received signal strength indicator (RSSI)
