@@ -275,8 +275,20 @@ uint8_t smallBuffer[128];
 
 int8_t RFM69::getAutoTxPower()
 {
-  int8_t txPower =13;
+  int16_t txPower =12;
 
+  int8_t targetRSSI;
+
+  //Higher speed needs more power
+  if(bitTime>=9)
+  {
+    targetRSSI = -90;
+  }
+  else
+  {
+    targetRSSI= -85;
+  }
+  
 
   //Detect if we aren't in auto mode
   if(_powerLevel>-127)
@@ -287,20 +299,20 @@ int8_t RFM69::getAutoTxPower()
 
   //If we have a message in the last 3 minutes, that means that we can
   //use TX power control
-  if(lastRx>(systemTime-(3L*60L*1000L*1000LL)))
+  if(lastGoodMessage>(systemTime-(3LL*60L*1000L*1000LL)))
   {
     //Target an RSSI on the other end of -90
-    txPower = (-90)+rxPathLoss;
+    txPower = targetRSSI;
+    txPower +=rxPathLoss;
+    
+    
+    //For every failed or canceled request that's happened, add 3db of power.
+    //txPower+= min(requestedReply*3,12);
+
     while(txPower%4)
     {
       txPower++;
     }
-
-    
-    //For every failed or canceled request that's happened, add 3db of power.
-    txPower+= min(requestedReply*3,12);
-  
-
     //When we've gone as high as we can go, then we turn on the FEC for an extra boost
     //Pretty sure 12db is legal in most countries, so let's maybe not go above that without
     //manual control.
@@ -313,7 +325,7 @@ int8_t RFM69::getAutoTxPower()
   {
     txPower=12;
   }
-  return txPower;
+  return (uint8_t)txPower;
 }
 
 void RFM69::sendSG1(const void* buffer, uint8_t bufferSize, uint8_t * challenge, uint8_t * key)
@@ -613,6 +625,33 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
 }
 
 
+bool RFM69::decodeSG1Header()
+{
+    //SG1 packets can't be shorter than this.
+    if(DATALEN<9)
+    {
+      debug("tooshort");
+      return false;
+    }
+
+    //First byte is the actual length from the framing, which includes itself
+    tmpBuffer[0]=PAYLOADLEN;
+   //Copy evrything in the header but the length nyte we already have
+    memcpy(tmpBuffer+1, DATA, 5);
+
+    if(golay_block_decode(tmpBuffer,rxHeader))
+    {
+        debug("badheader");
+        return false;
+    }
+    return true;
+}
+
+uint32_t RFM69::readHintSequence()
+{
+  return ((uint32_t *)(DATA+5+6))[0];
+}
+
 /*
 After recieving a packet, call this to decode it.
 Returns 1 if the message was an SG1 packet addressed to 
@@ -624,30 +663,16 @@ bool RFM69::decodeSG1(uint8_t * key)
 {
     int8_t _rssi = RSSI;
 
+    if(decodeSG1Header()==false)
+    {
+      return false;
+    }
+
     doTimestamp();
     //For keeping track of how much we trust the incoming timestamp
     uint8_t rxTimeTrust = 0;
 
-    //SG1 packets can't be shorter than this.
-    if(DATALEN<9)
-    {
-      debug("tooshort");
-      return false;
-    }
 
-    //First byte is the actual length from the framing, which includes itself
-    tmpBuffer[0]=PAYLOADLEN;
-
-
-   //Copy evrything in the header but the length nyte we already have
-    memcpy(tmpBuffer+1, DATA, 5);
-
-  
-    if(golay_block_decode(tmpBuffer,rxHeader))
-    {
-        debug("badheader");
-        return false;
-    }
     //subtract 1 from header, to skip past the implicit length byte,
     //It now represents the length of DATA
     DATALEN=rxHeader[0]-1;
@@ -659,9 +684,6 @@ bool RFM69::decodeSG1(uint8_t * key)
         DATALEN=128;
     }
     
-
-
-
     //Check what kind of FEC we are supposed to be using.
     if((rxHeader[1]& HEADER_FEC_FIELD))
     {
@@ -706,7 +728,7 @@ bool RFM69::decodeSG1(uint8_t * key)
           )
           {
             rxPathLoss = txRSSI-_rssi;
-            lastRx=systemTime;
+            lastGoodMessage=systemTime;
             debug("chbeacon");
           }
           //The wake request flag is used to let them wake us up
@@ -862,7 +884,7 @@ bool RFM69::decodeSG1(uint8_t * key)
       }
 
       rxPathLoss = txRSSI-_rssi;
-      lastRx=systemTime;
+      lastGoodMessage=systemTime;
       //Remove the hint, IV, and MAC from the length
       //Store in the real data len so the user has it
       DATALEN=remainingDataLen-(3+8+8);
@@ -1048,7 +1070,8 @@ void RFM69::setChannelKey(unsigned char * key) {
   //8 bytes total, first 4 are the hint sequence, next are the wake sequence.
    cipherContext.encrypt((uint8_t*)(&fixedHintSequence),input,3);
 
-
+  //The key itself can help us avoid issues with the entropy pool.
+  cipherContext.encrypt(entropyPool,entropyPool, 20);
 }
 
 

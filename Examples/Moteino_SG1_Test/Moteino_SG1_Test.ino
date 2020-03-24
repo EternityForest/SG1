@@ -52,7 +52,7 @@ void setup()
   radio.setChannelNumber(150);
 
   //Manual, use -127 to set automatic.
-  radio.setPowerLevel(11);
+  radio.setPowerLevel(-127);
 
   //Show state of module
   //radio.readAllRegs();
@@ -102,7 +102,7 @@ void loop()
     //radio.send((uint8_t *)pl, strlen(pl));
     radio.sendSG1Request((uint8_t *)pl, strlen(pl));
 
-    last = millis();
+    
     Serial.print("Sent, TX pwr:");
     Serial.println(radio.getAutoTxPower());
 
@@ -111,14 +111,18 @@ void loop()
     Serial.println(radio.readRSSI());
     Serial.print("System clock: ");
     Serial.println((int32_t)(radio.unixMicros()/1000000LL));
-    Serial.println("");
+    Serial.println("Path Loss:");
+    Serial.println(radio.rxPathLoss);
+    Serial.println("\n\n\n");
+    last = millis();
   }
 
 
   //If we have not gotten a reply, we are going to
-  //Retry once every ten seconds.
+  //Retry
   else if (!radio.receivedReply())
   {
+    //Allow 500ms, serial printing is slowing everything down
     if ((millis() - last) > 500)
     {
       //Limit 10 attempts to resend
@@ -127,8 +131,10 @@ void loop()
         attempts -= 1;
         //radio.send((uint8_t *)pl, strlen(pl));
         radio.sendSG1Request((uint8_t *)pl, strlen(pl));
-        last = millis();
+       
         Serial.println("Retry");
+        Serial.print(millis()-last);
+           last = millis();
       }
     }
   }
@@ -191,6 +197,11 @@ void loop()
         //Send an empty message in response.
         radio.sendSG1Reply(0, 0);
         Serial.println("Sent reply");
+      }
+
+      if(radio.isReply())
+      {
+        Serial.println("Got reply");
       }
     }
   }

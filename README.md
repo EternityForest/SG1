@@ -117,6 +117,9 @@ to avoid wasting bandwidth on messages that are only acknowledgements, so we let
 
 Call after decoding to learn what kind of message this is.
 
+Note that replies will only ever be to the most recent non-reply you have sent,
+so if you get a reply, you know what it is.
+
 ### radio.receivedReply()
 Returns true if the most recent non-reply you sent has beed replied to. You can safely send a reply
 while listening for one, but you can only be listening for a reply to one packet at a time.

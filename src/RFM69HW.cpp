@@ -305,6 +305,8 @@ void RFM69::sendFrame(const void* buffer, uint8_t bufferSize)
   //while (digitalRead(_interruptPin) == 0 && millis() - txStart < RF69_TX_LIMIT_MS); // wait for DIO0 to turn HIGH signalling transmission finish
   while ((readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PACKETSENT) == 0x00); // wait for PacketSent
   setMode(RF69_MODE_STANDBY);
+  //Go back to RX mode
+  receiveDone();
 }
 
 

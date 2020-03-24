@@ -241,8 +241,7 @@ class RFM69 {
     void urandom(uint8_t *, uint8_t);
 
     static void setTime(int64_t time, uint8_t trust= TIMETRUST_SECURE|TIMETRUST_CHALLENGERESPONSE|TIMETRUST_CLAIM_TRUST|TIMETRUST_ACCURATE);
-    //When we last got a correct packet
-    int64_t lastRx=0;
+
 
 
     uint8_t nodeID;
@@ -274,8 +273,12 @@ class RFM69 {
 
     void setNetwork(uint8_t networkID);
     void getEntropy(int changes=128);
+    
+    bool decodeSG1Header();
     bool decodeSG1(uint8_t * key=0);
     int64_t getPacketTimestamp();
+
+    uint32_t readHintSequence();
     uint32_t xorshift32();
 
     int32_t getFEI();
@@ -342,6 +345,7 @@ class RFM69 {
     bool isRecieving();
 
     int64_t rxTime=0;
+    int64_t lastGoodMessage=0;
     int8_t getAutoTxPower();
     
     void addEntropy(uint32_t x);
