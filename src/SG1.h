@@ -185,20 +185,15 @@
 
 
 
-class RFM69 {
+class SG1Channel
+{
   public:
-    static uint8_t DATA[RF69_MAX_DATA_LEN+1]; // RX/TX payload buffer, including end of string NULL char
-    static uint8_t DATALEN;
-    static uint8_t PAYLOADLEN;
-    static int16_t RSSI; // most accurate RSSI during reception (closest to the reception). RSSI of last packet.
-    static uint8_t _mode; // should be protected?
+    void recalcBeaconBytes();
 
+    //Return true if packet is for this radio
+    //bool checkPacket(RFM69 * rf);
+    void setChannelKey(uint8_t *);
     uint8_t channelKey[32];
-
-    //Used for keeping track of active wake requests.
-    uint8_t numWakeRequests=0;
-    struct WakeRequest * wakeRequests =0;
-
 
     //Thie hint sequences for 3 seconds ago.
     //We have to keep old and new, because the clocks are not to be
@@ -211,8 +206,6 @@ class RFM69 {
     uint32_t privateHintSequence;
 
     uint32_t fixedHintSequence;
-    uint16_t bitTime=10;
-
 
 
     //The hint sequence for 3 seconds from now
@@ -222,6 +215,30 @@ class RFM69 {
     //channel
     uint32_t newPrivateHintSequence;
 
+    //The current interval number we have cached data for
+    //This matches to one for newPrivateHintSequence,
+    //not the old one.
+    uint64_t  intervalNumber;
+};
+
+class RFM69 {
+  public:
+    static uint8_t DATA[RF69_MAX_DATA_LEN+1]; // RX/TX payload buffer, including end of string NULL char
+    static uint8_t DATALEN;
+    static uint8_t PAYLOADLEN;
+    static int16_t RSSI; // most accurate RSSI during reception (closest to the reception). RSSI of last packet.
+    static uint8_t _mode; // should be protected?
+
+    bool keepRemotesAwake=false;
+
+    SG1Channel defaultChannel;
+
+    //Used for keeping track of active wake requests.
+    uint8_t numWakeRequests=0;
+    struct WakeRequest * wakeRequests =0;
+
+
+    uint16_t bitTime=10;
 
     //Header of the last packet
     uint8_t rxHeader[3];

@@ -244,8 +244,6 @@ void RFM69::rawSetPowerLevel(int8_t powerLevel)
 
     powerLevel+=18;
   }
-  debug("pwr");
-  debug(powerLevel);
   writeReg(REG_PALEVEL, (readReg(REG_PALEVEL) & 0xE0) | powerLevel);
 }
 
@@ -381,7 +379,6 @@ void RFM69::interruptHandler() {
     select();
     SPI.transfer(REG_FIFO & 0x7F);
     PAYLOADLEN = SPI.transfer(0);
-    debug(PAYLOADLEN);
 
   
     for (uint8_t i = 0; i < (PAYLOADLEN-1); i++)

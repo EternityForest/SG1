@@ -429,7 +429,7 @@ uint8_t * useChallenge, uint8_t * key, uint8_t packetType)
     cipherContext.clear();
     if(key==0)
     {
-      cipherContext.setKey(channelKey,32);
+      cipherContext.setKey(defaultChannel.channelKey,32);
     }
     else
     {
@@ -439,9 +439,9 @@ uint8_t * useChallenge, uint8_t * key, uint8_t packetType)
     doTimestamp();
     
 
-    smallBuffer[0] = ((uint8_t *)&fixedHintSequence)[0];
-    smallBuffer[1] = ((uint8_t *)&fixedHintSequence)[1];
-    smallBuffer[2] = ((uint8_t *)&fixedHintSequence)[2];
+    smallBuffer[0] = ((uint8_t *)&(defaultChannel.fixedHintSequence))[0];
+    smallBuffer[1] = ((uint8_t *)&(defaultChannel.fixedHintSequence))[1];
+    smallBuffer[2] = ((uint8_t *)&(defaultChannel.fixedHintSequence))[2];
 
     //Hint comes before the IV, and first IV byte is
     //NodeID so don't put the time in that
@@ -509,7 +509,7 @@ uint8_t * useChallenge, uint8_t * key, uint8_t packetType)
 
 uint8_t rxHeader[8];
 
-void RFM69::recalcBeaconBytes() {
+void SG1Channel::recalcBeaconBytes() {
   //Recalc the hint sequences for this 16s period
   doTimestamp();
 
@@ -518,13 +518,13 @@ void RFM69::recalcBeaconBytes() {
 
   union{ 
       //Add 3 seconds to push us into the next 
-      uint64_t newIntervalNumber = (systemTime+3000000LL)/16777216;
+      uint64_t newIntervalNumber = (systemTime+3000000LL)/16777216LL;
       uint8_t IV[8];
   };
 
   union{ 
       //Add 3 seconds to push us into the previous 
-      uint64_t oldIntervalNumber = (systemTime-3000000LL)/16777216;
+      uint64_t oldIntervalNumber = (systemTime-3000000LL)/16777216LL;
       uint8_t oldIV[8];
   };
 
@@ -548,15 +548,24 @@ void RFM69::recalcBeaconBytes() {
   cipherContext.encrypt((uint8_t*)&newPrivateHintSequence,input,3);
   cipherContext.encrypt((uint8_t*)&newPrivateWakeSequence,input,3);
 
-  //Now calc the old. They may be the same, that's fine.
-  cipherContext.clear();
-  cipherContext.setKey(channelKey,32);
-  cipherContext.setIV(oldIV,8);
+  //If the old and new IVs are the same, just copy,
+  //Because that encrypt takes a millisecond.
+  if (memcmp(oldIV,IV,8))
+  {
+    cipherContext.clear();
+    cipherContext.setKey(channelKey,32);
+    cipherContext.setIV(oldIV,8);
 
-  //8 bytes total, first 4 are the hint sequence, next are the wake sequence.
-  cipherContext.encrypt((uint8_t*)&privateHintSequence,input,3);
-  cipherContext.encrypt((uint8_t*)&privateWakeSequence,input,3);
-
+    //8 bytes total, first 4 are the hint sequence, next are the wake sequence.
+    cipherContext.encrypt((uint8_t*)&privateHintSequence,input,3);
+    cipherContext.encrypt((uint8_t*)&privateWakeSequence,input,3);
+  }
+  else
+  {
+    memcpy((uint8_t*)&privateHintSequence,(uint8_t*)&newPrivateHintSequence,3);
+    memcpy((uint8_t*)&privateWakeSequence,(uint8_t*)&newPrivateWakeSequence,3);
+  }
+  
 }
 
 
@@ -716,27 +725,46 @@ bool RFM69::decodeSG1(uint8_t * key)
     //the brief channel hints
     if(DATALEN==3)
       {
-          recalcBeaconBytes();
+          defaultChannel.recalcBeaconBytes();
           //Pad with 0, only 3 bytes
           tmpBuffer[3]=0;
 
           uint32_t rxBeacon = ((uint32_t *)(tmpBuffer))[0];
-          if((rxBeacon==privateHintSequence) |
-           (rxBeacon==privateWakeSequence) |
-           (rxBeacon==newPrivateHintSequence) |
-           (rxBeacon==newPrivateWakeSequence)
+          if((rxBeacon==defaultChannel.privateHintSequence) |
+           (rxBeacon==defaultChannel.privateWakeSequence) |
+           (rxBeacon==defaultChannel.newPrivateHintSequence) |
+           (rxBeacon==defaultChannel.newPrivateWakeSequence)
           )
           {
             rxPathLoss = txRSSI-_rssi;
             lastGoodMessage=systemTime;
             debug("chbeacon");
+          
+            //The wake request flag is used to let them wake us up
+            if( (rxBeacon==defaultChannel.privateWakeSequence)|  (rxBeacon==defaultChannel.newPrivateWakeSequence))
+            {            
+              debug("chwake");
+              wakeRequestFlag=1;
+            }
+            else
+              //It's not one of the wake sequences, just a normal beacon.
+              //That means we can send it a message to keep it awake.
+              if(keepRemotesAwake)
+              {
+                sendBeacon(true);
+              }
+              else
+              {
+                //Just send a normal beacon, not a wake beacon.
+                sendBeacon(false);
+              }
+              
+            {
+              /* code */
+            }
+            
           }
-          //The wake request flag is used to let them wake us up
-          if( (rxBeacon==privateWakeSequence)|  (rxBeacon==newPrivateWakeSequence))
-          {            
-            debug("chwake");
-            wakeRequestFlag=1;
-          }
+
           debug("Just a beacon");
           DATALEN=0;
           return false;
@@ -760,11 +788,11 @@ bool RFM69::decodeSG1(uint8_t * key)
     uint32_t rxChannelHint = ((uint32_t *) tmpBuffer)[0];
     //We use a uint32, but it is really 3 bytes
     rxChannelHint &= 0b111111111111111111111111;
-    if((rxChannelHint==fixedHintSequence) | 
-    (rxChannelHint==privateHintSequence) | 
-    (rxChannelHint==privateWakeSequence) |
-    (rxChannelHint==newPrivateHintSequence) |
-    (rxChannelHint==newPrivateWakeSequence)
+    if((rxChannelHint==defaultChannel.fixedHintSequence) | 
+    (rxChannelHint==defaultChannel.privateHintSequence) | 
+    (rxChannelHint==defaultChannel.privateWakeSequence) |
+    (rxChannelHint==defaultChannel.newPrivateHintSequence) |
+    (rxChannelHint==defaultChannel.newPrivateWakeSequence)
     )
     {
       
@@ -778,7 +806,7 @@ bool RFM69::decodeSG1(uint8_t * key)
       //We do that by adding in the authentication data.
 
       cipherContext.clear();
-      cipherContext.setKey(channelKey,32);
+      cipherContext.setKey(defaultChannel.channelKey,32);
       cipherContext.setIV(rxIV,8);
 
       cipherContext.addAuthData(rxHeader,3);
@@ -863,7 +891,6 @@ bool RFM69::decodeSG1(uint8_t * key)
       }
       
      debug("tg");
-     debug(remainingDataLen);
 
     //By this point, datalen is the FEC encodable par after taking off the header and decoding.
 
@@ -873,9 +900,6 @@ bool RFM69::decodeSG1(uint8_t * key)
     cipherContext.decrypt(DATA, tmpBuffer+3+8,remainingDataLen-(3+8+8));
   
     
-    debug("Ds, b0:");
-    debug(tmpBuffer[remainingDataLen-8]);
-
       if(!cipherContext.checkTag(tmpBuffer+(remainingDataLen-8),8))
       {
         debug("rbc");
@@ -967,7 +991,7 @@ uint8_t RFM69::_headerTimeTrust()
 }
 void RFM69::sendBeacon(bool wakeUp)
 {
-  recalcBeaconBytes();
+  defaultChannel.recalcBeaconBytes();
   int8_t power = getAutoTxPower();
   while(power%4)
   {
@@ -984,11 +1008,11 @@ void RFM69::sendBeacon(bool wakeUp)
   golay_block_encode(header,tmpBuffer);
   if(wakeUp)
   {
-      memcpy(tmpBuffer+6,&privateWakeSequence,3);
+      memcpy(tmpBuffer+6,&(defaultChannel.privateWakeSequence),3);
   }
   else
   {
-      memcpy(tmpBuffer+6,&privateHintSequence,3);
+      memcpy(tmpBuffer+6,&(defaultChannel.privateHintSequence),3);
   }
   
   
@@ -1037,16 +1061,21 @@ bool RFM69::checkBeaconSleep()
         }
         else
         {
-          sleep();
+          
         }
       }
     }
   }
+  sleep();
   return 0;
 }
 
 
 void RFM69::setChannelKey(unsigned char * key) {
+  defaultChannel.setChannelKey(key);
+}
+
+void SG1Channel::setChannelKey(unsigned char * key) {
   memcpy(channelKey,key,32);
   recalcBeaconBytes();
 
@@ -1069,9 +1098,6 @@ void RFM69::setChannelKey(unsigned char * key) {
 
   //8 bytes total, first 4 are the hint sequence, next are the wake sequence.
    cipherContext.encrypt((uint8_t*)(&fixedHintSequence),input,3);
-
-  //The key itself can help us avoid issues with the entropy pool.
-  cipherContext.encrypt(entropyPool,entropyPool, 20);
 }
 
 
