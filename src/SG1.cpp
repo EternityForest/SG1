@@ -1099,6 +1099,11 @@ void RFM69::sendBeacon(bool wakeUp)
     header[1] |= HEADER_FEC_GOLAY;
     header[0]=12;
   }
+  else
+  {
+    header[0]=9;
+  }
+  
 
   golay_block_encode(header,tmpBuffer);
   if(wakeUp)
@@ -1118,7 +1123,8 @@ void RFM69::sendBeacon(bool wakeUp)
   //Beacons are short and uncommon, the 3 extra bytes is worth it most of the time.
   if(power>3)
   {
-    golay_block_encode(tmpBuffer+6,tmpBuffer+6);
+    memcpy(smallBuffer, tmpBuffer+6,3);
+    golay_block_encode(smallBuffer,tmpBuffer+6);
   }
 
 
