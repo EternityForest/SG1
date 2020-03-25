@@ -211,13 +211,13 @@ class SG1Channel
 
     //The hint sequence for 3 seconds from now
     //Used as the first 4 bytes after header to cause a wakeup
-    uint32_t newPrivateWakeSequence;
+    uint32_t altPrivateWakeSequence;
     //Used as the normal beaconing that devices do to announce that they are on a certain
     //channel
-    uint32_t newPrivateHintSequence;
+    uint32_t altPrivateHintSequence;
 
     //The current interval number we have cached data for
-    //This matches to one for newPrivateHintSequence,
+    //This matches to one for altPrivateHintSequence,
     //not the old one.
     uint64_t  intervalNumber;
 };
@@ -352,6 +352,7 @@ class RFM69 {
     virtual void rawSetPowerLevel(int8_t level); // reduce/increase transmit power level
 
     void sleep();
+    void sleepMCU(unsigned long t);
     uint8_t readTemperature(uint8_t calFactor=0); // get CMOS temperature (8bit)
     void rcCalibration(); // calibrate the internal RC oscillator for use in wide temperature variations - see datasheet section [4.3.5. RC Timer Accuracy]
 
@@ -383,7 +384,7 @@ class RFM69 {
     void addEntropy(uint32_t x);
 
     unsigned long monotonicMillis();
-    void addSleepTime(unsigned long t);
+    static void addSleepTime(unsigned long t);
 
   protected:
     static void isr0();

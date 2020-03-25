@@ -6,8 +6,6 @@
 // Modified for RFM69HCW by Mike Grusin, 4/16
 
 #include <SG1.h>
-#include "LowPower.h"
-
 #include <SPI.h>
 
 
@@ -82,23 +80,23 @@ uint8_t attempts = 10;
 void loop()
 {
 
-  if(last<(millis-600000L))
+  if(last<(radio.monotonicMillis()-600000L))
   {
     //Regular packet are needed for occasional clock sync
     radio.sendSG1Request("test",4);
   
       //Listen for replies, so we can time sync. We only need to do this process every hour or so.
-      for(int i=0;i<1000;i++)
+      for(int i=0;i<25;i++)
       {
         if(radio.receiveDone())
         {
           //Getting a reply means we can skip this for 10 miniutes
           if(radio.decodeSG1())
           {
-            last=millis();
+            last=radio.monotonicMillis();
           }
         }
-        delay(1);
+        radio.sleepMCU(15);
       }
   }
 
@@ -106,6 +104,7 @@ void loop()
  if(radio.checkBeaconSleep())
   {
     Serial.println("Got wakeup flag");
+    //Do stuff here?
   
   }
   else
@@ -113,5 +112,11 @@ void loop()
     Serial.println("No wakeup flag, radio sleeping 5s");
     Serial.println((int32_t)(radio.unixMicros()/1000000LL));
   }
-  delay(5000);
+
+  Serial.println("sleep");
+  Serial.flush();
+  //Use a true low power mode 
+  
+  radio.sleepMCU(5000);
+  Serial.println("wake");
 }

@@ -133,6 +133,9 @@ Turn the radio off, call radio.recieveDone() to wake.
 
 Determine if sending a beacon is necessary, and listens for any replies.
 
+As this is meant for low power operation, it will use real sleep mode while waiting,
+and may disrupt millis() and micros(), so use radio.monotonicMillis().
+
 If all of the following are true, puts the radio to sleep and returns False:
 
 * No recieved data on the channel for 18 seconds
@@ -172,8 +175,7 @@ Beacons on the current channel are recieved as if they are 0 byte packets.
 
 
 ### radio.xorshift32()
-Simple non-secure 32 bit random number generator used for internal backoff timings. Reseeded automatically, and fast, 
-but not secure.
+Simple non-secure 32 bit random number generator used for internal backoff timings. Reseeded automatically, and fast, but not secure.
 
 ### radio.setTime(int64_t uinxMicros)
 
@@ -200,6 +202,8 @@ Adds time to both system and monotonic timers.
 In particular, as this timestamp uses mircros(), so when doing some kinds of deep sleep you will want to add amount of time slept to it.
 
 
-
-
+### radio.sleepMCU(x)
+Put the MCU into sleep mode for x milliseconds. During this time micros
+and millis() may not advance, but radio.monotonicMillis() will correct for this
+and should behave as expected.
 

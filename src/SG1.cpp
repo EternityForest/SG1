@@ -38,7 +38,27 @@
 #include "utility/rweather/EAX.h"
 #include "utility/rweather/Curve25519.h"
 
-//#include <string.h>
+#if defined(__AVR_ATmega328P__) || defined(__AVR_ATmega168__) 
+
+#include "utility/Sleep_n0m1.h"
+Sleep sleepLib;
+void RFM69::sleepMCU(unsigned long x)
+{
+  sleepLib.pwrDownMode();
+  sleepLib.sleepDelay(x);
+  addSleepTime(x);
+}
+
+#else
+//fallback
+void RFM69::sleepMCU(unsigned long x)
+{
+  delay(x);
+}
+#endif
+
+
+
 
 void golay_block_encode(uint8_t * in, uint8_t * out);
 bool golay_block_decode(uint8_t * in, uint8_t * out);
@@ -64,13 +84,15 @@ ChaChaPoly cipherContext;
 #define HEADER_TIME_ACCURATE_FIELD 0b1000
 
 //This bit indicates if the packet is a reply
-#define HEADER_TYPE_FIELD         0b1110000
+#define HEADER_TYPE_FIELD            0b1110000
 
-#define HEADER_TYPE_UNRELIABLE    0b0010000
-#define HEADER_TYPE_RELIABLE      0b0100000
-//Any other reply types will always have this one set
-#define HEADER_TYPE_REPLY         0b1000000
-#define HEADER_TYPE_REPLY_SPECIAL 0b1010000
+#define HEADER_TYPE_UNRELIABLE       0b0010000
+#define HEADER_TYPE_RELIABLE         0b0100000
+//Any reply types will always have bit 6 set
+#define HEADER_TYPE_REPLY            0b1000000
+#define HEADER_TYPE_REPLY_SPECIAL    0b1010000
+
+#define HEADER_TYPE_RELIABLE_SPECIAL 0b0110000
 
 
 
@@ -87,12 +109,12 @@ int64_t systemTime =-1;
 uint8_t systemTimeBytes[8];
 };
 
-static unsigned long RFM69::monotonicMillis()
+unsigned long RFM69::monotonicMillis()
 {
   return arduinoMillisOffset+millis();
 }
 
-static void RFM69::addSleepTime(uint32_t m)
+void RFM69::addSleepTime(uint32_t m)
 {
   noInterrupts();
   arduinoMillisOffset+=m;
@@ -127,7 +149,7 @@ void RFM69::initSystemTime()
     urandom(systemTimeBytes, 8);
 
     //Make it obviously fake by being negative.
-    if(systemTime>0)
+    if(systemTime>0LL)
     {
       systemTime= (-systemTime);
     }
@@ -538,47 +560,59 @@ void SG1Channel::recalcBeaconBytes() {
   //Recalc the hint sequences for this 16s period
   doTimestamp();
 
-  //To tolerate misalignment, calculate at +3 and -3 seconds from the current time,
-  //And cache until the +3 time changes.
+  //To tolerate misalignment, calculate the current, and also the next closest
+  //interval, and accept either.
 
   union{ 
-      //Add 3 seconds to push us into the next period
-      uint64_t newIntervalNumber = (systemTime+5000000LL)/16777216LL;
-      uint8_t IV[8];
+      //Add 8 seconds to push us into the next period, 
+      uint64_t currentIntervalNumber = (systemTime)/16777216LL;
+      uint8_t currentIV[8];
   };
 
   union{ 
-      uint64_t oldIntervalNumber = (systemTime)/16777216LL;
-      uint8_t oldIV[8];
+      uint64_t altIntervalNumber = (systemTime+8000000L)/16777216LL;
+      uint8_t altIV[8];
   };
+
+  //So we tried incrementing, but it didn't change, meaning
+  //the actual closest interval is the previous one
+  //
+  if(currentIntervalNumber==altIntervalNumber)
+  {
+    altIntervalNumber = (systemTime-8000000L)/16777216LL;
+  }
 
   uint8_t input[8]={0,0,0,0};
-  if (newIntervalNumber==intervalNumber)
+  //detect cache
+  if (currentIntervalNumber==intervalNumber)
   {
     return;
   }
 
+  //set cache marker
+  intervalNumber = currentIntervalNumber;
+
   //Ensure byte 3 is set to zero, it's a padding byte
   privateHintSequence=0;
   privateWakeSequence=0;
-  newPrivateHintSequence=0;
-  newPrivateWakeSequence=0;
+  altPrivateHintSequence=0;
+  altPrivateWakeSequence=0;
 
   cipherContext.clear();
   cipherContext.setKey(channelKey,32);
-  cipherContext.setIV(IV,8);
+  cipherContext.setIV(altIV,8);
 
   //8 bytes total, first 4 are the hint sequence, next are the wake sequence.
-  cipherContext.encrypt((uint8_t*)&newPrivateHintSequence,input,3);
-  cipherContext.encrypt((uint8_t*)&newPrivateWakeSequence,input,3);
+  cipherContext.encrypt((uint8_t*)&altPrivateHintSequence,input,3);
+  cipherContext.encrypt((uint8_t*)&altPrivateWakeSequence,input,3);
 
   //If the old and new IVs are the same, just copy,
   //Because that encrypt takes a millisecond.
-  if (memcmp(oldIV,IV,8))
+  if (memcmp(currentIV,altIV,8))
   {
     cipherContext.clear();
     cipherContext.setKey(channelKey,32);
-    cipherContext.setIV(oldIV,8);
+    cipherContext.setIV(currentIV,8);
 
     //8 bytes total, first 4 are the hint sequence, next are the wake sequence.
     cipherContext.encrypt((uint8_t*)&privateHintSequence,input,3);
@@ -586,8 +620,8 @@ void SG1Channel::recalcBeaconBytes() {
   }
   else
   {
-    memcpy((uint8_t*)&privateHintSequence,(uint8_t*)&newPrivateHintSequence,3);
-    memcpy((uint8_t*)&privateWakeSequence,(uint8_t*)&newPrivateWakeSequence,3);
+    memcpy((uint8_t*)&privateHintSequence,(uint8_t*)&altPrivateHintSequence,3);
+    memcpy((uint8_t*)&privateWakeSequence,(uint8_t*)&altPrivateWakeSequence,3);
   }
   
 }
@@ -772,11 +806,14 @@ bool RFM69::decodeSG1(uint8_t * key)
           tmpBuffer[3]=0;
           debug("phs");
           debug(defaultChannel.privateHintSequence);
+          debug(defaultChannel.privateWakeSequence);
+
           uint32_t rxBeacon = ((uint32_t *)(tmpBuffer))[0];
-          if((rxBeacon==defaultChannel.privateHintSequence) |
-           (rxBeacon==defaultChannel.privateWakeSequence) |
-           (rxBeacon==defaultChannel.newPrivateHintSequence) |
-           (rxBeacon==defaultChannel.newPrivateWakeSequence)
+          debug(rxBeacon);
+          if((rxBeacon==defaultChannel.privateHintSequence) ||
+           (rxBeacon==defaultChannel.privateWakeSequence) ||
+           (rxBeacon==defaultChannel.altPrivateHintSequence) ||
+           (rxBeacon==defaultChannel.altPrivateWakeSequence)
           )
           {
             rxPathLoss = txRSSI-_rssi;
@@ -786,7 +823,7 @@ bool RFM69::decodeSG1(uint8_t * key)
             debug("chbeacon");
           
             //The wake request flag is used to let them wake us up
-            if( (rxBeacon==defaultChannel.privateWakeSequence)||  (rxBeacon==defaultChannel.newPrivateWakeSequence))
+            if( (rxBeacon==defaultChannel.privateWakeSequence)||  (rxBeacon==defaultChannel.altPrivateWakeSequence))
             {            
               debug("chwake");
               wakeRequestFlag=true;
@@ -807,12 +844,13 @@ bool RFM69::decodeSG1(uint8_t * key)
             {
               /* code */
             }
-            
+              debug("relevant beacon");
+              DATALEN=0;
+              return true;
           }
-
-          debug("Just a beacon");
-          DATALEN=0;
-          return true;
+              debug("irrelevant beacon");
+              DATALEN=0;
+              return false; 
       }
 
     //Back this up here, it's gonna get messed with by the send
@@ -836,8 +874,8 @@ bool RFM69::decodeSG1(uint8_t * key)
     if((rxChannelHint==defaultChannel.fixedHintSequence) | 
     (rxChannelHint==defaultChannel.privateHintSequence) | 
     (rxChannelHint==defaultChannel.privateWakeSequence) |
-    (rxChannelHint==defaultChannel.newPrivateHintSequence) |
-    (rxChannelHint==defaultChannel.newPrivateWakeSequence)
+    (rxChannelHint==defaultChannel.altPrivateHintSequence) |
+    (rxChannelHint==defaultChannel.altPrivateWakeSequence)
     )
     {
       
@@ -881,7 +919,13 @@ bool RFM69::decodeSG1(uint8_t * key)
             //We are going to try to maintain tight timing
             //100ms is the limit before we tell them.
             //Can't reply to a reply
-            if ((abs(diff) > (100000LL)) &&(!isReply()))
+
+            //For now, we are just going to automatically reply to all these
+            //RELIABLE_SPECIAL with the current time.
+            //Todo??
+            if (((abs(diff) > (100000LL)) &&(!isReply())) || 
+              ((rxHeader[1]&HEADER_TYPE_FIELD) == HEADER_TYPE_RELIABLE_SPECIAL)
+            )
             {
 
               //Don't send replies if they actually requested one, leave that to
@@ -889,7 +933,8 @@ bool RFM69::decodeSG1(uint8_t * key)
               //However, should the packet be more than 5s off, we can't pass this to application
               //code anyway
               if(((rxHeader[1]&HEADER_TYPE_FIELD) == HEADER_TYPE_UNRELIABLE) || 
-              (abs(diff)>5000000LL))
+              (abs(diff)>5000000LL) || 
+              ((rxHeader[1]&HEADER_TYPE_FIELD) == HEADER_TYPE_RELIABLE_SPECIAL))
               {
               ///the reason we can do this automatically without corrupting state is
               //Replies can't be replied to, so sending this won't overwrite the value that
@@ -1049,6 +1094,11 @@ void RFM69::sendBeacon(bool wakeUp)
 
   header[1]|= _headerTimeTrust();
 
+  if(power>3)
+  {
+    header[1] |= HEADER_FEC_GOLAY;
+    header[0]=12;
+  }
 
   golay_block_encode(header,tmpBuffer);
   if(wakeUp)
@@ -1069,8 +1119,6 @@ void RFM69::sendBeacon(bool wakeUp)
   if(power>3)
   {
     golay_block_encode(tmpBuffer+6,tmpBuffer+6);
-    header[1] |= HEADER_FEC_GOLAY;
-    header[0]=12;
   }
 
 
@@ -1107,19 +1155,39 @@ bool RFM69::checkBeaconSleep()
     return true;
   }
   debug("cb");
-  sendBeacon();
+  long waitTime;
+  //If our time is marked as accurate, or if we have gotten
+  //a packet in the last minute we can use short beacons
+  if((systemTimeTrust&TIMETRUST_ACCURATE) || lastSG1Message>(monotonicMillis()-60000L))
+  {
+    sendBeacon();
+    waitTime=(60000L+ (bitTime+500));
+  }
+  else{
+    //Otherwise we have to send a whole packet
+    rawSendSG1(0, 0, getAutoTxPower(), getAutoTxPower()>6,0, 0, HEADER_TYPE_RELIABLE_SPECIAL);
+    waitTime=(60000L+ (bitTime+1200));
+  }
+
   //Just long enough for them to respond.
   //We are assuming 16ms latency to get a packet and another
   //16 to reply, plus at least 10ms to actually process the crypto.
   //due to USB serial port latency.
-  for(long i=0;i<(60000L+ (bitTime+500)); i+=1000)
+  for(long i=0;i<waitTime; i+=1500)
   {
-    delay(1);
+    //Use the real low power sleep mode.
+    sleepLib.idleMode();
+    sleepLib.sleepDelay(15);
     if(receiveDone())
     {
       debug("br");
       debug(i);
-      decodeSG1();
+      //Them sending us valid traffic is just as good as a wake
+      //message.
+      if(decodeSG1())
+      {
+        return 1;
+      }
       if(wakeRequestFlag)
       {
         return 1;
@@ -1406,7 +1474,8 @@ bool RFM69::isReply()
 
 bool RFM69::isSpecialType()
 {
-  if((rxHeader[1]&HEADER_TYPE_FIELD)==HEADER_TYPE_REPLY_SPECIAL)
+  if(((rxHeader[1]&HEADER_TYPE_FIELD)==HEADER_TYPE_REPLY_SPECIAL)||
+    ((rxHeader[1]&HEADER_TYPE_FIELD)==HEADER_TYPE_RELIABLE_SPECIAL))
   {
     return true;
   }
@@ -1414,7 +1483,8 @@ bool RFM69::isSpecialType()
 }
 bool RFM69::isRequest()
 {
-  if((rxHeader[1]&HEADER_TYPE_FIELD)==HEADER_TYPE_RELIABLE)
+  if(((rxHeader[1]&HEADER_TYPE_FIELD)==HEADER_TYPE_RELIABLE)||
+  ((rxHeader[1]&HEADER_TYPE_FIELD)==HEADER_TYPE_RELIABLE_SPECIAL))
   {
     return 1;
   }

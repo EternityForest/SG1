@@ -6,7 +6,6 @@
 // Modified for RFM69HCW by Mike Grusin, 4/16
 
 #include <SG1.h>
-#include "LowPower.h"
 
 #include <SPI.h>
 
