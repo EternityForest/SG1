@@ -83,7 +83,7 @@ void loop()
 {
   if(millis()-l>1000)
   {
-        Serial.println((uint32_t)(radio.unixMicros()/1000));
+        Serial.println((int32_t)(radio.unixMicros()/1000000LL));
         l=millis();
   }
   

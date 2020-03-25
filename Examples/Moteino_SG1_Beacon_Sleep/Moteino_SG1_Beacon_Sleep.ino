@@ -81,20 +81,28 @@ uint8_t attempts = 10;
 
 void loop()
 {
-  //Regular packet are needed for occasional clock sync
-  radio.sendSG1("test",4);
 
-    //Listen for replies, so we can time sync. We only need to do this process every hour or so.
-    for(int i=0;i<1000;i++)
-    {
-      if(radio.receiveDone())
-      {
-        radio.decodeSG1();
-      }
-      delay(1);
-    }
-
+  if(last<(millis-600000L))
+  {
+    //Regular packet are needed for occasional clock sync
+    radio.sendSG1Request("test",4);
   
+      //Listen for replies, so we can time sync. We only need to do this process every hour or so.
+      for(int i=0;i<1000;i++)
+      {
+        if(radio.receiveDone())
+        {
+          //Getting a reply means we can skip this for 10 miniutes
+          if(radio.decodeSG1())
+          {
+            last=millis();
+          }
+        }
+        delay(1);
+      }
+  }
+
+ //What this does is o  
  if(radio.checkBeaconSleep())
   {
     Serial.println("Got wakeup flag");
@@ -103,7 +111,7 @@ void loop()
   else
   {
     Serial.println("No wakeup flag, radio sleeping 5s");
-    Serial.println((uint32_t)(radio.unixMicros()/1000));
+    Serial.println((int32_t)(radio.unixMicros()/1000000LL));
   }
   delay(5000);
 }

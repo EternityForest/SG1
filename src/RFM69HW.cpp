@@ -129,6 +129,8 @@ bool RFM69::initialize(uint8_t freqBand,uint8_t networkID)
   attachInterrupt(_interruptNum, RFM69::isr0, RISING);
 
   initSystemTime();
+  //Reject all packets that are older than this.
+  channelTimestampHead = unixMicros();
   
   //Speed up entropy with RX mode to use RSSI
   setMode(RF69_MODE_RX);
@@ -373,7 +375,6 @@ void RFM69::interruptHandler() {
     
   if (_mode == RF69_MODE_RX && (readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PAYLOADREADY))
   {
-    wakeRequestFlag=0;
     rxTime = unixMicros();
     setMode(RF69_MODE_STANDBY);
     select();

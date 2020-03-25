@@ -208,6 +208,7 @@ class SG1Channel
     uint32_t fixedHintSequence;
 
 
+
     //The hint sequence for 3 seconds from now
     //Used as the first 4 bytes after header to cause a wakeup
     uint32_t newPrivateWakeSequence;
@@ -247,7 +248,7 @@ class RFM69 {
     uint8_t rxIV[8];
 
     //UNIX timestamp micros
-    static int64_t unixMicros();
+    static int64_t unixMicros(uint32_t adj=0);
 
     bool receivedReply();
     bool isReply();
@@ -362,10 +363,27 @@ class RFM69 {
     bool isRecieving();
 
     int64_t rxTime=0;
-    int64_t lastGoodMessage=0;
+
+    //We have to track these separately.
+    //We need to know if the other node is there,
+    //But still stay asleep.
+
+    //This is the last full packet or beacon in 
+    unsigned long lastSG1Presence=0;
+
+
+    //This is the last SG1 packet that we were able to validate
+    //aside from beacons.
+    unsigned long lastSG1Message=0;
+
+    unsigned long lastSentSG1=0;
+
     int8_t getAutoTxPower();
     
     void addEntropy(uint32_t x);
+
+    unsigned long monotonicMillis();
+    void addSleepTime(unsigned long t);
 
   protected:
     static void isr0();

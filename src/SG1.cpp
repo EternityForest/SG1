@@ -78,6 +78,29 @@ ChaChaPoly cipherContext;
 static uint8_t systemTimeTrust = 0;
 static uint64_t lastAccurateTimeSet=0;
 
+static unsigned long arduinoMillisOffset = 0;
+
+static union
+{
+//UNIX time in microseconds
+int64_t systemTime =-1;
+uint8_t systemTimeBytes[8];
+};
+
+static unsigned long RFM69::monotonicMillis()
+{
+  return arduinoMillisOffset+millis();
+}
+
+static void RFM69::addSleepTime(uint32_t m)
+{
+  noInterrupts();
+  arduinoMillisOffset+=m;
+  systemTime+=(m*1000LL);
+  interrupts();
+}
+
+
 static union 
 {
   uint8_t entropyPool[20];
@@ -95,12 +118,6 @@ static union
 //static uint32_t rngState;
 #define rngState entropyRegister32
 
-static union
-{
-//UNIX time in microseconds
-int64_t systemTime =-1;
-uint8_t systemTimeBytes[8];
-};
 
 void RFM69::initSystemTime()
 {
@@ -112,7 +129,7 @@ void RFM69::initSystemTime()
     //Make it obviously fake by being negative.
     if(systemTime>0)
     {
-      systemTime= -systemTime;
+      systemTime= (-systemTime);
     }
   }
 }
@@ -121,7 +138,7 @@ static unsigned long systemTimeMicros=0;
 
 
 
-void doTimestamp(int16_t adjustment=0)
+void doTimestamp(uint32_t adjustment=0)
 {
   //Set systemTime to the correct value by adding the micros.
   //Adjustment adds up to that many micros but will never make the clock go
@@ -132,9 +149,19 @@ void doTimestamp(int16_t adjustment=0)
   int64_t y = x2-adjustment;
   
   //Clock doesn't go backwards except when actually set.
+  
   if(y<0)
   {
-    y=0;
+    //Don't let the adjustment slow things down
+    //to zero, that could cause problems.
+    if(x2>0)
+    {
+      y=1;
+    }
+    else
+    {
+      y=0;
+    }
   }
 
   systemTime += y;
@@ -155,9 +182,9 @@ void doTimestamp(int16_t adjustment=0)
   interrupts();
 }
 
-int64_t RFM69::unixMicros()
+int64_t RFM69::unixMicros(uint32_t adj)
 {
-  doTimestamp();
+  doTimestamp(adj);
   return systemTime;
 }
 
@@ -299,7 +326,7 @@ int8_t RFM69::getAutoTxPower()
 
   //If we have a message in the last 3 minutes, that means that we can
   //use TX power control
-  if(lastGoodMessage>(systemTime-(3LL*60L*1000L*1000LL)))
+  if(lastSG1Presence>(monotonicMillis()-(3L*60L*1000L)))
   {
     //Target an RSSI on the other end of -90
     txPower = targetRSSI;
@@ -330,7 +357,6 @@ int8_t RFM69::getAutoTxPower()
 
 void RFM69::sendSG1(const void* buffer, uint8_t bufferSize, uint8_t * challenge, uint8_t * key)
 {
-  doTimestamp();
   int8_t txPower= getAutoTxPower();
   //Reset the failed request tracking
   requestedReply=0;
@@ -339,7 +365,6 @@ void RFM69::sendSG1(const void* buffer, uint8_t bufferSize, uint8_t * challenge,
 
 void RFM69::sendSG1Request(const void* buffer, uint8_t bufferSize)
 {
-  doTimestamp();
   int8_t txPower= getAutoTxPower();
   requestedReply+=1;
   rawSendSG1(buffer, bufferSize, txPower>10, txPower,0, 0,HEADER_TYPE_RELIABLE);
@@ -347,7 +372,6 @@ void RFM69::sendSG1Request(const void* buffer, uint8_t bufferSize)
 
 void RFM69::sendSG1Reply(const void* buffer, uint8_t bufferSize)
 {
-  doTimestamp();
   int8_t txPower= getAutoTxPower();
   rawSendSG1(buffer, bufferSize, txPower>10, txPower,rxIV, 0, HEADER_TYPE_REPLY);
 }
@@ -445,7 +469,7 @@ uint8_t * useChallenge, uint8_t * key, uint8_t packetType)
 
     //Hint comes before the IV, and first IV byte is
     //NodeID so don't put the time in that
-    memcpy(smallBuffer+1+3, systemTimeBytes+1,5);
+    memcpy(smallBuffer+1+3, systemTimeBytes+1,7);
 
     //First 3 bytes of this are the hint. 4th byte is nodeid part of iv.
     smallBuffer[3]=nodeID;
@@ -499,6 +523,7 @@ uint8_t * useChallenge, uint8_t * key, uint8_t packetType)
    
     //Similarly subtract one from the number, because send expects the actual data len
     //exculding the length byte itself
+    lastSentSG1=monotonicMillis();
     send(tmpBuffer+1, header[0]-1);
 }
 
@@ -517,14 +542,13 @@ void SG1Channel::recalcBeaconBytes() {
   //And cache until the +3 time changes.
 
   union{ 
-      //Add 3 seconds to push us into the next 
-      uint64_t newIntervalNumber = (systemTime+3000000LL)/16777216LL;
+      //Add 3 seconds to push us into the next period
+      uint64_t newIntervalNumber = (systemTime+5000000LL)/16777216LL;
       uint8_t IV[8];
   };
 
   union{ 
-      //Add 3 seconds to push us into the previous 
-      uint64_t oldIntervalNumber = (systemTime-3000000LL)/16777216LL;
+      uint64_t oldIntervalNumber = (systemTime)/16777216LL;
       uint8_t oldIV[8];
   };
 
@@ -573,7 +597,7 @@ void SG1Channel::recalcBeaconBytes() {
 int64_t  RFM69::getPacketTimestamp()
 {
   int64_t rxTimestamp=0;
-  memcpy( ((uint8_t *)&rxTimestamp)+1, rxIV+1,7);
+  memcpy( ((uint8_t *)(&rxTimestamp))+1, rxIV+1,7);
   return rxTimestamp;
 }
 
@@ -581,12 +605,13 @@ int64_t  RFM69::getPacketTimestamp()
 void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
 {
 
-
-    int64_t rxTimestamp=getPacketTimestamp();
+    int64_t rxTimestamp=0;
     int64_t diff;
 
-    //Gonna subtract the data time, the preamble, and the sync bytes
-    //at 100kbps. We want the start time.
+    //Gonna subtract the data time, the preamble, and the sync bytes.
+    //we want the start time.
+
+    rxTimestamp=getPacketTimestamp();
 
     //This basically find out how far ahead their clock is
     diff=rxTimestamp-(rxTime-((PAYLOADLEN*bitTime)+400LL+400LL));
@@ -599,22 +624,37 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
 
     if((rxTimeTrust>=systemTimeTrust) & (rxTimeTrust>=TIMETRUST_CHALLENGERESPONSE) )
     {
+      debug("t");
       //data+4 is node ID, the rest of the IV is the time.
-      if(( (rxTimeTrust & TIMETRUST_ACCURATE) || (abs(diff)>100000LL)))
+      
+      //More than 2s, just jump. Less than that, use the
+      //safe version and do slow adjustment without going backwards.
+      debug((int32_t)(systemTime/1000000LL));
+        debug((int32_t)(diff/1000000LL));
+        debug((int32_t)(rxTimestamp/1000000LL));
+        debug((int32_t)(rxTime/1000000LL));
+      if((abs(diff)>2000000LL))
       {
+        debug("ad");
         systemTime+=diff;
+
+        //Yes, this can go backwards. It's somewhat of a nonce reuse hazard.
+        //You got a better plan?
+        channelTimestampHead=getPacketTimestamp();
       }
       else
       {
-        //For small differences with inaccurate clocks, average
-        //Our time and theirs, to hopefully get some kind of consenseus.
-        systemTime+= (diff/2LL);
+        if(rxTimeTrust>systemTimeTrust)
+        {
+          doTimestamp(diff);
+        }
+        else
+        {
+          doTimestamp(diff/2);
+        }
       }
 
-      //Yes, this can go backwards
-      channelTimestampHead=getPacketTimestamp();
-      
-      
+          
       systemTimeTrust=rxTimeTrust;
 
       if(rxTimeTrust & TIMETRUST_ACCURATE)
@@ -624,6 +664,7 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
     }
     else if ((rxTimeTrust& TIMETRUST_ACCURATE) && (rxTimeTrust&&TIMETRUST_SECURE))
     {
+      debug("ta");
       if (abs(diff) <30000L)
       {
         //We can do very small adjustments continually, whenever we get a
@@ -637,7 +678,7 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
 bool RFM69::decodeSG1Header()
 {
     //SG1 packets can't be shorter than this.
-    if(DATALEN<9)
+    if(DATALEN<8)
     {
       debug("tooshort");
       return false;
@@ -681,7 +722,8 @@ bool RFM69::decodeSG1(uint8_t * key)
     //For keeping track of how much we trust the incoming timestamp
     uint8_t rxTimeTrust = 0;
 
-
+    //Set to true later
+    wakeRequestFlag=false;
     //subtract 1 from header, to skip past the implicit length byte,
     //It now represents the length of DATA
     DATALEN=rxHeader[0]-1;
@@ -728,7 +770,8 @@ bool RFM69::decodeSG1(uint8_t * key)
           defaultChannel.recalcBeaconBytes();
           //Pad with 0, only 3 bytes
           tmpBuffer[3]=0;
-
+          debug("phs");
+          debug(defaultChannel.privateHintSequence);
           uint32_t rxBeacon = ((uint32_t *)(tmpBuffer))[0];
           if((rxBeacon==defaultChannel.privateHintSequence) |
            (rxBeacon==defaultChannel.privateWakeSequence) |
@@ -737,14 +780,16 @@ bool RFM69::decodeSG1(uint8_t * key)
           )
           {
             rxPathLoss = txRSSI-_rssi;
-            lastGoodMessage=systemTime;
+            
+            
+            lastSG1Presence=systemTime;
             debug("chbeacon");
           
             //The wake request flag is used to let them wake us up
-            if( (rxBeacon==defaultChannel.privateWakeSequence)|  (rxBeacon==defaultChannel.newPrivateWakeSequence))
+            if( (rxBeacon==defaultChannel.privateWakeSequence)||  (rxBeacon==defaultChannel.newPrivateWakeSequence))
             {            
               debug("chwake");
-              wakeRequestFlag=1;
+              wakeRequestFlag=true;
             }
             else
               //It's not one of the wake sequences, just a normal beacon.
@@ -767,7 +812,7 @@ bool RFM69::decodeSG1(uint8_t * key)
 
           debug("Just a beacon");
           DATALEN=0;
-          return false;
+          return true;
       }
 
     //Back this up here, it's gonna get messed with by the send
@@ -834,9 +879,9 @@ bool RFM69::decodeSG1(uint8_t * key)
         {
             int64_t diff=(getPacketTimestamp()-((rxTime-((PAYLOADLEN*bitTime)+400LL+400LL))));
             //We are going to try to maintain tight timing
-            //50ms is the limit before we tell them
+            //100ms is the limit before we tell them.
             //Can't reply to a reply
-            if ((abs(diff) > (25000LL)) &&(!isReply()))
+            if ((abs(diff) > (100000LL)) &&(!isReply()))
             {
 
               //Don't send replies if they actually requested one, leave that to
@@ -850,7 +895,7 @@ bool RFM69::decodeSG1(uint8_t * key)
               //Replies can't be replied to, so sending this won't overwrite the value that
               //Says what we are watching for, if we were watching for something
               debug("ofset");
-              debug((float)diff);
+              debug((int32_t)(diff/1000000LL));
               int8_t autoPwr = getAutoTxPower();
               rawSendSG1(tmpBuffer, 0, autoPwr>10, autoPwr,rxIV,0,HEADER_TYPE_REPLY_SPECIAL);
             }
@@ -870,8 +915,6 @@ bool RFM69::decodeSG1(uint8_t * key)
           {
 
             debug("rtn");
-
-
             DATALEN=0;
             return false;
           }
@@ -890,16 +933,16 @@ bool RFM69::decodeSG1(uint8_t * key)
           }
       }
       
-     debug("tg");
+      debug("tg");
 
-    //By this point, datalen is the FEC encodable par after taking off the header and decoding.
+      //By this point, datalen is the FEC encodable par after taking off the header and decoding.
 
-    //Encrypted part starts after the 3 byte hint and 8 byte IV, since we already
-    //Took off the header.
-    //It also *ends* before the IV, so we subtract 3+8+8
-    cipherContext.decrypt(DATA, tmpBuffer+3+8,remainingDataLen-(3+8+8));
-  
+      //Encrypted part starts after the 3 byte hint and 8 byte IV, since we already
+      //Took off the header.
+      //It also *ends* before the IV, so we subtract 3+8+8
+      cipherContext.decrypt(DATA, tmpBuffer+3+8,remainingDataLen-(3+8+8));
     
+      
       if(!cipherContext.checkTag(tmpBuffer+(remainingDataLen-8),8))
       {
         debug("rbc");
@@ -908,7 +951,9 @@ bool RFM69::decodeSG1(uint8_t * key)
       }
 
       rxPathLoss = txRSSI-_rssi;
-      lastGoodMessage=systemTime;
+      lastSG1Presence=monotonicMillis();
+      lastSG1Message=lastSG1Presence;
+
       //Remove the hint, IV, and MAC from the length
       //Store in the real data len so the user has it
       DATALEN=remainingDataLen-(3+8+8);
@@ -1014,11 +1059,14 @@ void RFM69::sendBeacon(bool wakeUp)
   {
       memcpy(tmpBuffer+6,&(defaultChannel.privateHintSequence),3);
   }
+  debug("phs");
+  debug(defaultChannel.privateHintSequence);
   
-  
-  //If we need more than 10dbm, we also probably need to use error correction.
-  //This adds an extra 3 bytes
-  if(power>10)
+  //If we need more than 3dbm, we also probably need to use error correction.
+  //This adds an extra 3 bytes.
+
+  //Beacons are short and uncommon, the 3 extra bytes is worth it most of the time.
+  if(power>3)
   {
     golay_block_encode(tmpBuffer+6,tmpBuffer+6);
     header[1] |= HEADER_FEC_GOLAY;
@@ -1038,6 +1086,7 @@ void RFM69::sendBeacon(bool wakeUp)
     _receiveDone();
   }
 
+  lastSentSG1=monotonicMillis();
   //SendFrame does the length byte for you
   sendFrame(tmpBuffer+1, header[0]);
   
@@ -1046,23 +1095,34 @@ void RFM69::sendBeacon(bool wakeUp)
 //Send a beacon and see if anyone tells us to wake up.
 bool RFM69::checkBeaconSleep()
 {
+  //Any recent message indicates we should stay awake.
+  if(lastSG1Message>(monotonicMillis()-18000L))
+  {
+    //But if we haven't sent a message in too long, send one
+    //anyway.
+    if(lastSentSG1<(monotonicMillis()-1500LL))
+    {
+      sendBeacon();
+    }
+    return true;
+  }
+  debug("cb");
   sendBeacon();
-  //Just long enough for bit time. We count by ms
-  for(long i=0;i<(bitTime*(40+40+60+30)*2); i+=1000)
+  //Just long enough for them to respond.
+  //We are assuming 16ms latency to get a packet and another
+  //16 to reply, plus at least 10ms to actually process the crypto.
+  //due to USB serial port latency.
+  for(long i=0;i<(60000L+ (bitTime+500)); i+=1000)
   {
     delay(1);
     if(receiveDone())
     {
-      if(decodeSG1())
+      debug("br");
+      debug(i);
+      decodeSG1();
+      if(wakeRequestFlag)
       {
-        if(wakeRequestFlag)
-        {
-          return 1;
-        }
-        else
-        {
-          
-        }
+        return 1;
       }
     }
   }
@@ -1171,12 +1231,26 @@ void RFM69::setBitrate(uint32_t bps)
 
 void RFM69::setDeviation(uint32_t hz)
 {
+  //probably fine to ditch a preamble byte or two
+  //with wide channels
+  if(hz>=110000)
+  {
+    writeReg(REG_PREAMBLELSB,0x02);
+  }
+  else
+  {
+      writeReg(REG_PREAMBLELSB,0x04);
+  }
+
   //Round to nearest by adding half the fstep
   hz+=30;
   hz/=61;
 
   writeReg(REG_FDEVMSB, hz/256);
   writeReg(REG_FDEVLSB,hz%256);
+
+  
+  
 }
 
 //Approximately set the RX bandwidth, rounding up to the next step

@@ -86,6 +86,8 @@ If we are recieving, return true and go to standby  got a packet. If not, start 
 Call after getting a packet. Returns true if message was a real SG1 encoded message on our channel key, and decodes the actual
 payload into data and datalen.
 
+Note that this will return true if the message was short beacon frame as well.
+In the case of beacons, the data will always be 0.
 
 ### int32_t radio.getFEI()
 Return the radio's measured frequency offset in Hz. If you have a particular two radios that don't seem to get along, you cat use this.
@@ -124,9 +126,78 @@ so if you get a reply, you know what it is.
 Returns true if the most recent non-reply you sent has beed replied to. You can safely send a reply
 while listening for one, but you can only be listening for a reply to one packet at a time.
 
+### radio.sleep()
+Turn the radio off, call radio.recieveDone() to wake.
+
+### radio.checkBeaconSleep()
+
+Determine if sending a beacon is necessary, and listens for any replies.
+
+If all of the following are true, puts the radio to sleep and returns False:
+
+* No recieved data on the channel for 18 seconds
+* No response to the beacon within 60ms+500 bit times.
+
+This is the suggested way to enter sleep mode, as it first checks if
+the other nodes would rather we stay up.
+
+Call recieveDone() to wake up.
+
+### radio.keepRemotesAwake
+
+If true, the node replies to all beacons on the channel automatically(Assuming you call recieveDone often enough!).
+
+Using this and checkBeaconSleep, you can create very low power devices that periodically send beacons with recieve windows.
+
+Note that it is possible for packet loss to affect a beacon, and thus this can
+fail to keep a remote awake.
+
+You will most likely want to detect traffic from the node, and send periodic
+keepalives for as long as you want them to stay awake, or until there is no longer a response.
+
+
+
+### radio.lastSG1Message
+radio.monotonicMillis() time of the last packet. If not using sleep,
+it is the same as millis()
+
+### radio.lastSG1Presence
+millis() time of the last full packet or beacon we were able to recieve.
+
+### radio.sendBeacon(wakeUp=false)
+Send a beacon immediately. If wakeup is true, sends a wake beacon telling
+other nodes to wake up.
+
+Beacons on the current channel are recieved as if they are 0 byte packets.
+
+
 ### radio.xorshift32()
 Simple non-secure 32 bit random number generator used for internal backoff timings. Reseeded automatically, and fast, 
 but not secure.
+
+### radio.setTime(int64_t uinxMicros)
+
+Set the time to any of 3 different types of value, and mark the time as locally
+set and therefore trusted. At least one node must do this!!
+
+If 0, don't change anything. just mark the time. If using a random timestamp,
+it should be negative.
+
+Otherwise, it should be a UNIX timestamp in microseconds.
+
+### static radio.unixMicros(adj=0)
+Current system timestamp, either a positive real time, or negative random network time not referenced to an epoch. Set adj to something nonzero to add or remove time from it.  
+
+This timestamp can change at any time, including going backwards, as it is synced with SG1.
+
+### static radio.monotonicMillis()
+Same as the default millis(), but can by affected by addSleepTime.
+
+### static radio.addSleepTime(uint32_t x)
+
+Adds time to both system and monotonic timers.
+
+In particular, as this timestamp uses mircros(), so when doing some kinds of deep sleep you will want to add amount of time slept to it.
 
 
 
