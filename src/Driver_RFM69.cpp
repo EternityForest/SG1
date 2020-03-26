@@ -25,7 +25,7 @@
 // and copyright notices in any redistribution of this code
 // **********************************************************************************
 #include "SG1.h"
-#include "RFM69registers.h"
+#include "utility/Driver_RFM69registers.h"
 
 void initSystemTime();
 

@@ -25,7 +25,7 @@
 // and copyright notices in any redistribution of this code
 // **********************************************************************************
 #include "SG1.h"
-#include "RFM69registers.h"
+#include "utility/Driver_RFM69registers.h"
 
 #include <SPI.h>
 
@@ -40,7 +40,7 @@
 
 #if defined(__AVR_ATmega328P__) || defined(__AVR_ATmega168__) 
 
-#include "utility/Sleep_n0m1.h"
+#include "utility/sleepn0m1/Sleep_n0m1.h"
 Sleep sleepLib;
 void RFM69::sleepMCU(unsigned long x)
 {
