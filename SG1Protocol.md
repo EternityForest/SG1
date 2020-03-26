@@ -42,9 +42,9 @@ Reply messages have bit 7 set.
 #### Status(1 byte)
 0-3: TX RSSI before antenna gain(4db increments starting at -24db)
 
-### Channel Hint[3 bytes]
+### Channel Hint[20 bits ]
 
-This 4 byte sequence is an approximate "hint" as to what this message is for.
+This sequence is an approximate "hint" as to what this message is for.
 It is used so we don't have to try decrypting against every possible key.
 
 It can be one of:
@@ -55,6 +55,8 @@ It can be one of:
 
 Should it be the wake sequence, it means they are requesting all listening devices on the channel keep listening.
 
+### Hint Sequence Flags[4 bits]:
+Reserved, must be all zeros.
 
 ### IV(Not present in Beacon messages)
 This is the device's Node ID, followed by 7 bytes of the current time, in 256us intervals since the UNIX epoch.
@@ -81,9 +83,15 @@ In generaal, special packets should not be passed to user code.
 
 ## Beaconing
 
-We must periodically send a short beacon message. For this the hint must be the private hint sequence. Note that this is not fully authenticated, however it is slightly secure as they look like random data and can't be tracked easily.
+We must periodically send a short beacon message. For this the hint must be the private hint sequence, not the fixed hint, as fixed hints can have persistant collisions and there is no MAC to resolve them.
 
-We must continue listening for 3 milliseconds, to give other nodes an opportunity to wake us up with a beacon frame using the Private Wake Sequence.
+Note that this is not fully authenticated, however it is slightly secure as they look like random data. However, one can falsify the presence of another device
+on the channel just by repeating beacons.
+
+If preventing this is important, you wil need to send full authenticated packets.
+
+
+We must continue listening for at least 45 milliseconds, to give other nodes an opportunity to wake us up with a beacon frame using the Private Wake Sequence.
 
 This is secure, as we only get one try per beacon, and it is completely unpredictable wihtout the key, so falsely sending wake messages is very hard.
 

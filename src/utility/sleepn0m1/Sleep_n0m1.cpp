@@ -22,7 +22,7 @@
  *
  ***********************************************************************************/
 
-#include "utility/Sleep_n0m1.h"
+#include "utility/sleepn0m1/Sleep_n0m1.h"
 
 Sleep* Sleep::pSleep = 0;
 

@@ -69,6 +69,8 @@ bool golay_block_decode(uint8_t * in, uint8_t * out);
 //EAX<SpeckTiny> cipherContext;
 ChaChaPoly cipherContext;
 
+#define HINT_SEQUENCE_MASK 0b11111111111111111111
+
 //Flags for byte 1 of the header.
 #define HEADER_FEC_FIELD 0b11
 
@@ -623,7 +625,10 @@ void SG1Channel::recalcBeaconBytes() {
     memcpy((uint8_t*)&privateHintSequence,(uint8_t*)&altPrivateHintSequence,3);
     memcpy((uint8_t*)&privateWakeSequence,(uint8_t*)&altPrivateWakeSequence,3);
   }
-  
+  privateHintSequence &=HINT_SEQUENCE_MASK;
+  privateWakeSequence &=HINT_SEQUENCE_MASK;
+  altPrivateHintSequence &=HINT_SEQUENCE_MASK;
+  altPrivateWakeSequence &=HINT_SEQUENCE_MASK;
 }
 
 
@@ -809,6 +814,9 @@ bool RFM69::decodeSG1(uint8_t * key)
           debug(defaultChannel.privateWakeSequence);
 
           uint32_t rxBeacon = ((uint32_t *)(tmpBuffer))[0];
+          //Limit to 20 bits
+          rxBeacon &= HINT_SEQUENCE_MASK;
+
           debug(rxBeacon);
           if((rxBeacon==defaultChannel.privateHintSequence) ||
            (rxBeacon==defaultChannel.privateWakeSequence) ||
@@ -869,8 +877,8 @@ bool RFM69::decodeSG1(uint8_t * key)
 
     //Let's see if this message is on our channel
     uint32_t rxChannelHint = ((uint32_t *) tmpBuffer)[0];
-    //We use a uint32, but it is really 3 bytes
-    rxChannelHint &= 0b111111111111111111111111;
+    //We use a uint32, but it is really 20 bits
+    rxChannelHint &= HINT_SEQUENCE_MASK;
     if((rxChannelHint==defaultChannel.fixedHintSequence) | 
     (rxChannelHint==defaultChannel.privateHintSequence) | 
     (rxChannelHint==defaultChannel.privateWakeSequence) |
@@ -1232,6 +1240,8 @@ void SG1Channel::setChannelKey(unsigned char * key) {
 
   //8 bytes total, first 4 are the hint sequence, next are the wake sequence.
    cipherContext.encrypt((uint8_t*)(&fixedHintSequence),input,3);
+
+   fixedHintSequence &=HINT_SEQUENCE_MASK;
 }
 
 

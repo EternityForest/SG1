@@ -1,5 +1,5 @@
 #include "SG1.h"
-#include "RFM69registers.h"
+#include "Driver_RFM69registers.h"
 
 // SERIAL PRINT
 // replace Serial.print("string") with SerialPrint("string")
