@@ -33,7 +33,7 @@ void setup()
 
   Serial.begin(9600);
   Serial.print("Node ");
-  Serial.println(" ready");
+  Serial.println(" ready,sleep");
 
 
   // Initialize the RFM69HCW:
@@ -49,10 +49,10 @@ void setup()
   radio.setChannelNumber(150);
 
   //Manual, use -127 to set automatic.
-  radio.setPowerLevel(-127);
+  radio.setPowerLevel(12);
 
   //Show state of module
-  //radio.readAllRegs();
+  radio.readAllRegs();
 
   //Every node on a channel needs a unique ID byte
   radio.setNodeID('A');
@@ -79,17 +79,18 @@ uint8_t attempts = 10;
 
 void loop()
 {
-
-  if(last<(radio.monotonicMillis()-600000L))
+ radio.sendSG1Request("test",4);
+  if((radio.monotonicMillis()-last)> 60000L || (last==0))
   {
     //Regular packet are needed for occasional clock sync
     radio.sendSG1Request("test",4);
-  
+    Serial.println("Sent packet");
       //Listen for replies, so we can time sync. We only need to do this process every hour or so.
       for(int i=0;i<25;i++)
       {
         if(radio.receiveDone())
         {
+          Serial.println("Got raw data");
           //Getting a reply means we can skip this for 10 miniutes
           if(radio.decodeSG1())
           {
@@ -98,6 +99,7 @@ void loop()
         }
         radio.sleepMCU(15);
       }
+      Serial.println("sync attaempt done");
   }
 
  //What this does is o  

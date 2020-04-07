@@ -13,7 +13,9 @@ resist noise.
 This header is always sent as 6 bytes golay encoded. Golay encoding is always done in 6 byte blocks with 3 input bytes.
 
 #### Length(1 byte)
-The length byte, also the raw RFM69 length byte
+The length byte. This INCLUDES itself, but is *not* actually sent, it is implied by the actual length of the packet and added before decoding.
+
+Note that most RF modules use a length byte that does *not* include itself, but this is not a relevant detail unless you are decoding with SDR.
 
 #### Flags(1 byte)
 Bits:
@@ -81,6 +83,8 @@ on the other device.
 
 In generaal, special packets should not be passed to user code.
 
+The first byte of the special packet is always a packet type, if present.
+
 ## Beaconing
 
 We must periodically send a short beacon message. For this the hint must be the private hint sequence, not the fixed hint, as fixed hints can have persistant collisions and there is no MAC to resolve them.
@@ -116,7 +120,15 @@ We must use the RSSI and TX power in the header to estimate the path loss to the
 
 ## Packet acceptance
 
-We reject anything more than ten seconds old, or older than the newest packet we have seen on the channel, or that does not decode properly.
+We reject anything more than ten seconds old, or older than the newest packet we have seen on the channel, or that does not decode properly, or more than ten seconds
+newer than the current time.
+
+### Disabling replay protection
+For unsecured public channels that are only used briefly, disabling all time-based validation is an acceptable mode of operation.
+
+In this case, all automatic setting of the system clock must also be disabled, and packets recieved must not be counted as "the newest packet recieved on the channel" for the purposes of rejecting duplicates, otherwise, this node could move the counter backwards and cause trouble when switching replay protection back on.
+
+
 
 ## Initial Time Sync
 
@@ -126,3 +138,96 @@ This is the least secure part of the whole setup, because we are temporarily run
 in random-clock mode till the master gives us a timestamp.
 
 However, there is still 2**48 possible time values, reuse is unlikely-ish.
+
+
+## Pairing
+
+A device may listen for pairing messages from other devices.  Pairing is done by jumpting to channel 3 on the GFSK38K profile.
+
+The device must then listen for pairing requests, which are special packets with the type 16.
+
+In response, it then sends a message with type 17, containing the Curve25519 key 
+from the first half of ECDH key agreement, followed by a 16 byte UUID representing the type of device.
+
+The other device then sends a message with type 18, again containing the shared secret, followed by a connection parameters string that is encrypted with the shared secret on key(using chachapoly), and signed with an 8 byte MAC.
+
+The connection parameters are as follows:
+32 byte new channel key,
+8 bit RF profile number(0=1200bps, 6=250kbps)
+16 bit new channel number
+
+Upon recieving this, the device must immediately set it's connection parameters to the new settings and jump to the new channel.
+
+Because pairing operates on a public channel where clocks may not be synced,
+all pairing must be performed with replay attack protection disabled.
+
+
+## Device info packets
+
+These are special packets that provide information about a device. The first 
+16 bytes must be a UUID representing the device, like a serial number.
+
+The next 16 must be a UUID reprenting the model number.
+
+The following 16 bust represent the device class of the device.
+
+The remainder may be up to 24 UTF8 characters with no null terminator, representing
+a friendly name for the device.
+
+These packets should be rarely, if ever sent at any time other than initial setup.
+
+
+
+
+## Connection Parameters Data Format
+
+The canonical representation of the data needed to establish a connection is
+the 32 byte channel key, followed by the one byte RF profile, followed by the 
+2 byte channel number.
+
+
+## RF Profiles
+
+### 1: GFSK600
+600 baud, 6.25KHz deviation, 25Khz channel spacing
+
+### 2: GFSK1200
+1200 baud, 10KHz deviation, 50Khz channel spacing
+
+### 3: GFSK4800
+4800 baud, 25KHz deviation, 100Khz channel spacing
+
+
+### 4: GFSK10K
+10kbaud, 25khz deviation, 100Khz spacing
+
+### 5: GFSK38k
+38400 baud, 80khz deviation, 250khz spacing
+
+### 6: GFSK100K:
+100kbaud, 100khz deviation, 250khz spacing
+
+### 7: GFSK250K
+250Kbaud, 125khz deviation, 500khz spacing
+
+
+## Channel Numbers
+
+To convert a ch number to a frequency, first compute the number of channels that fit in the regional frequency band. Then subtract the bottom two, and the frequency is the center of the Nth channel, modulo the number of channels should the user select one that is too high.
+
+This always reserves 2x the bandwidth at the bottom of the band for lower bandwidth applications.
+
+
+## Gateway protocol
+
+### NanoFrame packet framing for serial links
+
+Every packet begins with a start byte that is a 42.
+This is followed by a length byte, which only includes the payload.
+After this is the payload, and then a single stop byte, a 43.
+
+The first byte of any payload is always the command byte.
+
+This protocol has been designed for extremely low resource usage over
+very short serial links with almost nonexistant error rates.
+

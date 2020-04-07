@@ -128,7 +128,6 @@ bool RFM69::initialize(uint8_t freqBand,uint8_t networkID)
     return false;
   attachInterrupt(_interruptNum, RFM69::isr0, RISING);
 
-  initSystemTime();
   //Reject all packets that are older than this.
   channelTimestampHead = unixMicros();
   
@@ -136,6 +135,9 @@ bool RFM69::initialize(uint8_t freqBand,uint8_t networkID)
   setMode(RF69_MODE_RX);
   getEntropy();
   setMode(RF69_MODE_STANDBY);
+  setProfile(RF_PROFILE_GFSK250K);
+  initSystemTime();
+
 
 
   return true;
@@ -194,7 +196,7 @@ void RFM69::setMode(uint8_t newMode)
 
   // we are using packet mode, so this check is not really needed
   // but waiting for mode ready is necessary when going from sleep because the FIFO may not be immediately available from previous mode
-  while (_mode == RF69_MODE_SLEEP && (readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00); // wait for ModeReady
+  while  (_mode == RF69_MODE_SLEEP && (readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00); // wait for ModeReady
 
   _mode = newMode;
 }
@@ -258,8 +260,8 @@ int32_t RFM69::getFEI()
 
 bool RFM69::canSend()
 {
-  // if signal stronger than -100dBm is detected assume channel activity
-  if (_mode == RF69_MODE_RX && PAYLOADLEN == 0 && readRSSI() < CSMA_LIMIT) 
+  //Increase the CSMA threshold with wider channels. 500khz has 12 extra db of allowed noise.
+  if (_mode == RF69_MODE_RX && ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_SYNCADDRESSMATCH) ==0) && readRSSI() < (CSMA_LIMIT+(channelSpacing/40))) 
   {
     setMode(RF69_MODE_STANDBY);
     return true;
@@ -267,19 +269,44 @@ bool RFM69::canSend()
   return false;
 }
 
+bool RFM69::trySend(const void* buffer, uint8_t bufferSize)
+{
+  writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFB) | RF_PACKET2_RXRESTART); // avoid RX deadlocks
+  //Check for packets that we don't want to erase by entering TX mode
+  _receiveDone();
+  debug("rcd");
+
+  //Need to be in RX mode to receive 
+  setMode(RF69_MODE_RX);
+  if (!canSend())
+  {
+    debug("no");
+   return false;
+  }
+  sendFrame(buffer, bufferSize);
+  debug("snt");
+  return true;
+}
+
 void RFM69::send(const void* buffer, uint8_t bufferSize)
 {
   writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFB) | RF_PACKET2_RXRESTART); // avoid RX deadlocks
   uint32_t now = millis();
-  while (!canSend() && millis() - now < RF69_CSMA_LIMIT_MS)
+  while (millis() - now < RF69_CSMA_LIMIT_MS)
   {
+    if(trySend(buffer, bufferSize))
+    {
+      return;
+    }
     //8ms seems like a reasonable length to use for CSMA.
-    delayMicroseconds(xorshift32()& 8192L);
+    delayMicroseconds(xorshift32()%8192);
     //Underscore doesn't mark things as handled, we can still return
     //the packet to the user when they call the non-underscore version.
     _receiveDone();
   }
-  sendFrame(buffer, bufferSize+1);
+
+  //Finally just send it anyway?
+  sendFrame(buffer, bufferSize);
 }
 
 
@@ -287,9 +314,13 @@ void RFM69::send(const void* buffer, uint8_t bufferSize)
 void RFM69::sendFrame(const void* buffer, uint8_t bufferSize)
 {
   setMode(RF69_MODE_STANDBY); // turn off receiver to prevent reception while filling fifo
+  debug("w");
   while ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00); // wait for ModeReady
+  debug("w2");
   //writeReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_00); // DIO0 is "Packet Sent"
-  if (bufferSize > RF69_MAX_DATA_LEN) bufferSize = RF69_MAX_DATA_LEN;
+  if (bufferSize > RF69_MAX_DATA_LEN){
+    bufferSize = RF69_MAX_DATA_LEN;
+  }
 
   // write to FIFO
   select();
@@ -303,7 +334,18 @@ void RFM69::sendFrame(const void* buffer, uint8_t bufferSize)
   setMode(RF69_MODE_TX);
   //uint32_t txStart = millis();
   //while (digitalRead(_interruptPin) == 0 && millis() - txStart < RF69_TX_LIMIT_MS); // wait for DIO0 to turn HIGH signalling transmission finish
-  while ((readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PACKETSENT) == 0x00); // wait for PacketSent
+  debug("w3");
+  while ((readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PACKETSENT) == 0x00)
+  {
+    if(!(readReg(REG_OPMODE)&0x1C == RF_OPMODE_TRANSMITTER))
+    {
+      //In case the device somehow managed to exit TX mode, like
+      //If someone enabled the auto mode feature
+      break;
+    }
+    delay(1);
+  } // wait for PacketSent
+  debug("w4");
   setMode(RF69_MODE_STANDBY);
   //Go back to RX mode
   receiveDone();
@@ -316,7 +358,11 @@ ISR_PREFIX void RFM69::isr0() { _haveData = true; }
 
 // internal function
 void RFM69::receiveBegin() {
-  DATALEN = 0;
+ 
+  //Don't set this to zero, we don't wipe out the existing payload
+  //DATALEN = 0;
+
+  //Set this to zero, it's the "In progress" recieve  
   PAYLOADLEN = 0;
 
 
@@ -337,10 +383,11 @@ bool RFM69::_receiveDone() {
   if (_mode == RF69_MODE_RX && PAYLOADLEN > 0)
   {
     setMode(RF69_MODE_STANDBY); // enables interrupts
+  
     //Until the user actually calls the real
     //function, this is marked as unhandled,
     //preventing the user API 
-    //from calling this a
+    //from calling this again and erasing the data
     handled=false;
     return true;
   }
@@ -349,6 +396,7 @@ bool RFM69::_receiveDone() {
     return false;
   }
   receiveBegin();
+
   return false;
 }
 
@@ -382,11 +430,11 @@ void RFM69::interruptHandler() {
     PAYLOADLEN = SPI.transfer(0);
 
   
-    for (uint8_t i = 0; i < (PAYLOADLEN-1); i++)
+    for (uint8_t i = 0; i < (PAYLOADLEN); i++)
     {
         DATA[i]=SPI.transfer(0);
     }
-    DATALEN = PAYLOADLEN-1;
+    DATALEN = PAYLOADLEN;
     
     unselect();
     setMode(RF69_MODE_RX);    

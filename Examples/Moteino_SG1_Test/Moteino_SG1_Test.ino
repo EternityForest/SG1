@@ -88,7 +88,6 @@ void loop()
   // Set up a "buffer" for characters that we'll send:
 
   const char * pl = "One Ring\0\0";
-  const char * pl2 = "One Ring to Find Them\0\0";
 
   //LowPower.idle(SLEEP_15MS, ADC_OFF, TIMER2_ON, TIMER1_ON, TIMER0_ON,
   //                SPI_ON, USART0_ON, TWI_OFF);
@@ -99,10 +98,9 @@ void loop()
   {
 
     //radio.send((uint8_t *)pl, strlen(pl));
-    radio.sendSG1Request((uint8_t *)pl, strlen(pl));
 
-    
-    Serial.print("Sent, TX pwr:");
+
+
     Serial.println(radio.getAutoTxPower());
 
     //Read the background noise level.
@@ -112,7 +110,11 @@ void loop()
     Serial.println((int32_t)(radio.unixMicros()/1000000LL));
     Serial.println("Path Loss:");
     Serial.println(radio.rxPathLoss);
+
+    radio.sendSG1Request((uint8_t *)pl, strlen(pl));
+    Serial.print("Sent, TX pwr:");
     Serial.println("\n\n\n");
+    
     last = millis();
   }
 

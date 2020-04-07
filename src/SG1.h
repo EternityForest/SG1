@@ -27,6 +27,8 @@
 #define RFM69_h
 #include <Arduino.h>            // assumes Arduino IDE v1.0 or greater
 #include <SPI.h>
+#include <EEPROM.h>
+
 
 //Levels of time trust. OR the trust attributes together to get a trust level
 #define TIMETRUST_ACCURATE 1
@@ -36,6 +38,9 @@
 //We obviously shouldn't
 #define TIMETRUST_SECURE 4
 #define TIMETRUST_CHALLENGERESPONSE 8
+
+//This can only be set locally and blocks remote setting.
+#define TIMETRUST_LOCAL 128
 
 //////////////////////////////////////////////////////////////////////
 //Platform and digitalPinToInterrupt definitions credit to RadioHead//
@@ -240,6 +245,11 @@ class RFM69 {
 
 
     uint16_t bitTime=10;
+    uint16_t eepromAddr=48;
+
+    void useEEPROM(uint16_t addr);
+
+    bool replayProtection=true;
 
     //Header of the last packet
     uint8_t rxHeader[3];
@@ -259,8 +269,6 @@ class RFM69 {
     void urandom(uint8_t *, uint8_t);
 
     static void setTime(int64_t time, uint8_t trust= TIMETRUST_SECURE|TIMETRUST_CHALLENGERESPONSE|TIMETRUST_CLAIM_TRUST|TIMETRUST_ACCURATE);
-
-
 
     uint8_t nodeID;
 
@@ -304,13 +312,17 @@ class RFM69 {
     void setBitrate(uint32_t bps);
     void setChannelFilter(uint32_t bps);
     void setProfile(uint8_t profile);
+
+    //unknown
+    uint8_t rfProfile=0;
+
     void setChannelSpacing(uint32_t hz);
 
     void setDeviation(uint32_t hz);
     void setChannelNumber(uint16_t ch);
 
     //Width of a channel in khz includig padding
-    uint16_t channelSpacing=350;
+    uint16_t channelSpacing=500;
     uint16_t channelNumber=1;
 
     uint8_t freqBand = 0;
@@ -385,6 +397,7 @@ class RFM69 {
 
     unsigned long monotonicMillis();
     static void addSleepTime(unsigned long t);
+    virtual bool _receiveDone();
 
   protected:
     static void isr0();
@@ -392,15 +405,23 @@ class RFM69 {
     virtual void interruptHook(uint8_t CTLbyte) {};
     static volatile bool _haveData;
     virtual void sendFrame(const void* buffer, uint8_t size);
+    bool RFM69::trySend(const void* buffer, uint8_t bufferSize);
+
     void recalcBeaconBytes();
     void doPerPacketTimeFunctions(uint8_t rxTimeTrust);
     void initSystemTime();
-    virtual bool _receiveDone();
 
 
     uint8_t _headerTimeTrust();
     bool _recieveDone();
     bool isSpecialType();
+
+    //Sets the remote's address to the current channel key.
+    bool pairWithRemote();
+    bool listenForPairing(uint8_t deviceClass[16]);
+
+    //Used internally by the system to track if ew got a special message
+    bool gotSpecialPacket=0;
 
     //Lets us do _recieveDone in the internal loop but
     //mark the packet as unhandled to return it to the user later
@@ -442,13 +463,13 @@ class RFM69 {
 
 };
 
-
-#define RF_PROFILE_GFSK1200 1
-#define RF_PROFILE_GFSK4800 2
-#define RF_PROFILE_GFSK10K 3
-#define RF_PROFILE_GFSK38K 4
-#define RF_PROFILE_GFSK100K 5
-#define RF_PROFILE_GFSK250K 6
+#define RF_PROFILE_GFSK600 1
+#define RF_PROFILE_GFSK1200 2
+#define RF_PROFILE_GFSK4800 3
+#define RF_PROFILE_GFSK10K 4
+#define RF_PROFILE_GFSK38K 5
+#define RF_PROFILE_GFSK100K 6
+#define RF_PROFILE_GFSK250K 7
 
 
 uint32_t urandomRange(uint32_t f, uint32_t t);
@@ -456,7 +477,7 @@ void urandom(uint8_t * target, uint8_t len);
 
 #endif
 
-//#define debug(x) Serial.println(x);Serial.flush()
+//#define debug(x) Serial.println((x));Serial.flush()
 //#define REGISTER_DETAIL
 #define debug(x)
 

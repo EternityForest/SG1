@@ -34,7 +34,7 @@ void setup()
 
   Serial.begin(9600);
   Serial.print("Node ");
-  Serial.println(" ready");
+  Serial.println(" ready. wake");
 
 
   // Initialize the RFM69HCW:
