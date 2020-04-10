@@ -81,12 +81,12 @@ bool RFM69::initialize(uint8_t freqBand,uint8_t networkID)
     /* 0x29 */ { REG_RSSITHRESH, 228 }, // must be set to dBm = (-Sensitivity / 2), default is 0xE4 = 228 so -114dBm
     /* 0x2D */ { REG_PREAMBLELSB, 0x04 }, //4 preamble bytes
     
-    /* 0x2E */ { REG_SYNCCONFIG, RF_SYNC_ON | RF_SYNC_FIFOFILL_AUTO | RF_SYNC_SIZE_4 | RF_SYNC_TOL_3 },
-    /* 0x2F */ { REG_SYNCVALUE1, 0x2D },      // attempt to make this compatible with sync1 byte of RFM12B lib
+    /* 0x2E */ { REG_SYNCCONFIG, RF_SYNC_ON | RF_SYNC_FIFOFILL_AUTO | RF_SYNC_SIZE_4 | RF_SYNC_TOL_1 },
+    /* 0x2F */ { REG_SYNCVALUE1, 0x2D },     
     /* 0x30 */ { REG_SYNCVALUE2, 'E' }, // NETWORK ID
     //Use a repeated 2 bytes to hopefully be able to also support to CC1101
     /* 0x31 */ { REG_SYNCVALUE3, 0x2D },
-              { REG_SYNCVALUE4, 'E' },
+               { REG_SYNCVALUE4, 'E' },
 
     /* 0x37 */ { REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_OFF | RF_PACKET1_CRC_OFF | RF_PACKET1_CRCAUTOCLEAR_OFF | RF_PACKET1_ADRSFILTERING_OFF },
     /* 0x38 */ { REG_PAYLOADLENGTH, 128 }, // in variable length mode: the max frame size, not used in TX
@@ -261,7 +261,7 @@ int32_t RFM69::getFEI()
 bool RFM69::canSend()
 {
   //Increase the CSMA threshold with wider channels. 500khz has 12 extra db of allowed noise.
-  if (_mode == RF69_MODE_RX && ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_SYNCADDRESSMATCH) ==0) && readRSSI() < (CSMA_LIMIT+(channelSpacing/40))) 
+  if ((_mode == RF69_MODE_RX) && ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_SYNCADDRESSMATCH) ==0) && (readRSSI() < (CSMA_LIMIT+(channelSpacing/40)))) 
   {
     setMode(RF69_MODE_STANDBY);
     return true;
@@ -274,10 +274,26 @@ bool RFM69::trySend(const void* buffer, uint8_t bufferSize)
   writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFB) | RF_PACKET2_RXRESTART); // avoid RX deadlocks
   //Check for packets that we don't want to erase by entering TX mode
   _receiveDone();
-  debug("rcd");
+  
+  //If using FHSS, avoid sending at times very close to the boundaries
+  //To minimize the effect of error
+  if(channelNumber>1000)
+  {
+    uint16_t x =unixMicros();
+    if ((x < 5000)|| (x>60000))
+    {
+      delay(10);
+    }
 
-  //Need to be in RX mode to receive 
+    setChannelNumber(channelNumber);
+  }
+
+  if(!(_mode==RF69_MODE_RX))
+  {
+  //Need to be in RX mode to receive the RSSI info 
   setMode(RF69_MODE_RX);
+  delay(1);
+  }
   if (!canSend())
   {
     debug("no");
@@ -314,9 +330,7 @@ void RFM69::send(const void* buffer, uint8_t bufferSize)
 void RFM69::sendFrame(const void* buffer, uint8_t bufferSize)
 {
   setMode(RF69_MODE_STANDBY); // turn off receiver to prevent reception while filling fifo
-  debug("w");
   while ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00); // wait for ModeReady
-  debug("w2");
   //writeReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_00); // DIO0 is "Packet Sent"
   if (bufferSize > RF69_MAX_DATA_LEN){
     bufferSize = RF69_MAX_DATA_LEN;
@@ -332,20 +346,25 @@ void RFM69::sendFrame(const void* buffer, uint8_t bufferSize)
 
   // no need to wait for transmit mode to be ready since its handled by the radio
   setMode(RF69_MODE_TX);
-  //uint32_t txStart = millis();
-  //while (digitalRead(_interruptPin) == 0 && millis() - txStart < RF69_TX_LIMIT_MS); // wait for DIO0 to turn HIGH signalling transmission finish
-  debug("w3");
-  while ((readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PACKETSENT) == 0x00)
-  {
-    if(!(readReg(REG_OPMODE)&0x1C == RF_OPMODE_TRANSMITTER))
+  //Predict how long it will take, instead of polling the entire time
+  delayMicroseconds((bitTime*(40L+32+8+(bufferSize*8L))));
+  uint32_t txStart = micros();
+  
+  while (digitalRead(_interruptPin) == 0 && millis() - txStart < RF69_TX_LIMIT_MS); // wait for DIO0 to turn HIGH signalling transmission finish
+  
+  //while ((readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PACKETSENT) == 0x00)
+  /*{
+    if(!((readReg(REG_OPMODE)&0x1C) == RF_OPMODE_TRANSMITTER))
     {
+      debug("NO TX");
       //In case the device somehow managed to exit TX mode, like
       //If someone enabled the auto mode feature
-      break;
+      //break;
     }
     delay(1);
   } // wait for PacketSent
-  debug("w4");
+*/
+
   setMode(RF69_MODE_STANDBY);
   //Go back to RX mode
   receiveDone();
@@ -380,7 +399,9 @@ bool RFM69::_receiveDone() {
   	_haveData = false;
   	interruptHandler();
   }
-  if (_mode == RF69_MODE_RX && PAYLOADLEN > 0)
+ 
+  
+  if (_mode == RF69_MODE_RX && (PAYLOADLEN > 0))
   {
     setMode(RF69_MODE_STANDBY); // enables interrupts
   
@@ -391,10 +412,18 @@ bool RFM69::_receiveDone() {
     handled=false;
     return true;
   }
-  else if (_mode == RF69_MODE_RX) // already in RX no payload yet
+  
+  //Recalc the hopping
+  if(channelNumber>1000)
+  {
+    setChannelNumber(channelNumber);
+  }
+  
+  if (_mode == RF69_MODE_RX) // already in RX no payload yet
   {
     return false;
   }
+
   receiveBegin();
 
   return false;
@@ -404,7 +433,7 @@ bool RFM69::receiveDone() {
   
   //If there is an unhandled packet, tell
   //the user about that instead of just trashing it.
-  if(PAYLOADLEN>0 && (handled==false))
+  if(handled==false)
   {
     handled=true;
     return true;

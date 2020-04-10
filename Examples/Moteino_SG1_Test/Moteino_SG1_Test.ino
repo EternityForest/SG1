@@ -88,6 +88,7 @@ void loop()
   // Set up a "buffer" for characters that we'll send:
 
   const char * pl = "One Ring\0\0";
+  const char * pl2 = "One Ring to Find Them\0\0";
 
   //LowPower.idle(SLEEP_15MS, ADC_OFF, TIMER2_ON, TIMER1_ON, TIMER0_ON,
   //                SPI_ON, USART0_ON, TWI_OFF);

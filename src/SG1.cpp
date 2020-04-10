@@ -98,12 +98,19 @@ ChaChaPoly cipherContext;
 #define SPECIAL_TYPE_PAIRING_REQUEST 16
 #define SPECIAL_TYPE_PAIRING_CHALLENGE 17
 #define SPECIAL_TYPE_PAIRING_RESPONSE 18
+#define SPECIAL_TYPE_PAIRING_CONFIG 18
 
 #define SPECIAL_TIME_VALUE_IGNORE_REPLAY_PROTECTION -1
 
 static uint8_t systemTimeTrust = 0;
-static uint64_t lastAccurateTimeSet = 0;
+//This is in monotonicMillis()
+static uint32_t lastAccurateTimeSet = 0;
 
+//Also monotonicMillis, this one just determines how long since
+//We synced either with TIMETRUST_ACCURATE, TIMETRUST_LOCAL, or with a remote node.
+//basically, it's used for determining if we should be using
+//A random FHSS search
+static uint32_t lastTimeSync = 0;
 static unsigned long arduinoMillisOffset = 0;
 
 static union {
@@ -158,7 +165,7 @@ void RFM69::initSystemTime()
 }
 static unsigned long systemTimeMicros = 0;
 
-void doTimestamp(uint32_t adjustment = 0)
+void doTimestamp(uint32_t adjustment=0)
 {
   //Set systemTime to the correct value by adding the micros.
   //Adjustment adds up to that many micros but will never make the clock go
@@ -191,14 +198,14 @@ void doTimestamp(uint32_t adjustment = 0)
   //The clock has drifted and we aren't accurate anymore.
 
   //TODO:
-  if (systemTimeTrust & TIMETRUST_ACCURATE)
+  if (systemTimeTrust & (TIMETRUST_ACCURATE))
   {
-    if (systemTime - lastAccurateTimeSet > 600000LL)
+    if (RFM69::monotonicMillis() - lastAccurateTimeSet > 600000LL)
     {
       systemTimeMicros -= TIMETRUST_ACCURATE;
     }
   }
-
+  
   interrupts();
 }
 
@@ -303,6 +310,10 @@ void RFM69::setTime(int64_t time, uint8_t trust)
   }
   systemTimeTrust = trust;
 
+  if(trust&(TIMETRUST_ACCURATE|TIMETRUST_LOCAL))
+  {
+    lastTimeSync=monotonicMillis();
+  }
   interrupts();
 }
 
@@ -356,10 +367,26 @@ int8_t RFM69::getAutoTxPower()
     //When we've gone as high as we can go, then we turn on the FEC for an extra boost
     //Pretty sure -4db is legal in most countries, so let's maybe not go above that without
     //manual control.
-    if (txPower > -4)
+
+    //Technically we are targeting 1.25dbm, but there's antenna gain worry about here.
+    if(channelNumber<1001)
     {
-      txPower = -4;
+      if (txPower > -4)
+      {
+        txPower = -4;
+      }
     }
+    //FHSS can use higher power
+    else
+    {
+      if (txPower > -12)
+      {
+        txPower = -4;
+      }
+    }
+    
+
+
   }
   else
   {
@@ -373,6 +400,13 @@ void RFM69::sendSG1(const void *buffer, uint8_t bufferSize, uint8_t *challenge, 
   int8_t txPower = getAutoTxPower();
   //Reset the failed request tracking
   requestedReply = 0;
+
+  //Randomly hop around if we haven't gotten anything in a while.
+  if(monotonicMillis()-lastTimeSync > 60000L)
+  {
+    fhssOffset+=1;
+  }
+ 
   rawSendSG1(buffer, bufferSize, txPower > 10, txPower, challenge, key, HEADER_TYPE_UNRELIABLE);
 }
 
@@ -505,8 +539,7 @@ retry:
   //memcpy((uint8_t *)smallBuffer+3+8, (uint8_t *)buffer, bufferSize);
   cipherContext.computeTag(smallBuffer + 3 + 8 + bufferSize, 8);
 
-  debug("et");
-  debug(smallBuffer[3+8+bufferSize]);
+
   if (useFEC)
   {
     for (unsigned char i = 0; i < (bufferSize + 8 + 8 + 3); i += 3)
@@ -529,8 +562,7 @@ retry:
     //trySend does the length byte for you
     //it also expects just the payload length.
     //Without the len byte
-    debug("tsnd");
-    debug(( header[0] - 1));
+
     if (trySend(tmpBuffer + 1, header[0] - 1))
     {
       lastSentSG1 = monotonicMillis();
@@ -540,7 +572,6 @@ retry:
   }
 
   //Time to try again, we weren't able to send
-  debug("rt");
   goto retry;
 }
 
@@ -647,49 +678,34 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
   //If we trust this packet more than the clock,
   //Set the clock from this.
 
-  if ((rxTimeTrust >= systemTimeTrust) & (rxTimeTrust >= TIMETRUST_CHALLENGERESPONSE))
+  //Packet is secure, and very close to our time, and at least as trusted.
+  //We are going to perform a small adujstment, adjusting our time
+  //This has already passed replay protection.
+  if ((rxTimeTrust >= systemTimeTrust) && (rxTimeTrust >= TIMETRUST_SECURE) && (abs(diff) < 2000000LL))
   {
-    debug("t");
+    debug("adj");
+    doTimestamp(diff / 2);
+    lastTimeSync=monotonicMillis();
+  }
+
+  //Otherwise, we have to a jump
+  else if ((rxTimeTrust >= systemTimeTrust) && (rxTimeTrust >= TIMETRUST_CHALLENGERESPONSE))
+  {
     //data+4 is node ID, the rest of the IV is the time.
 
-    //More than 2s, just jump. Less than that, use the
-    //safe version and do slow adjustment without going backwards.
-    if ((abs(diff) > 2000000LL))
-    {
-      debug("ad");
-      systemTime += diff;
+    //More than 2s, just jump.
+    debug("tj");
+    systemTime += diff;
 
-      //Yes, this can go backwards. It's somewhat of a nonce reuse hazard.
-      //You got a better plan?
-      channelTimestampHead = getPacketTimestamp();
-    }
-    else
-    {
-      if (rxTimeTrust > systemTimeTrust)
-      {
-        doTimestamp(diff);
-      }
-      else
-      {
-        doTimestamp(diff / 2);
-      }
-    }
+    //Yes, this can go backwards. It's somewhat of a nonce reuse hazard.
+    //You got a better plan?
+    channelTimestampHead = getPacketTimestamp();
 
     systemTimeTrust = rxTimeTrust;
 
     if (rxTimeTrust & TIMETRUST_ACCURATE)
     {
-      lastAccurateTimeSet = systemTime;
-    }
-  }
-  else if ((rxTimeTrust & TIMETRUST_ACCURATE) && (rxTimeTrust && TIMETRUST_SECURE))
-  {
-    debug("ta");
-    if (abs(diff) < 30000L)
-    {
-      //We can do very small adjustments continually, whenever we get a
-      //new packet
-      doTimestamp(diff);
+      lastAccurateTimeSet = monotonicMillis();
     }
   }
 }
@@ -806,6 +822,8 @@ bool RFM69::listenForPairing(uint8_t deviceClass[16])
         }
         else if (state == 1)
         {
+          //This packet doesn't do anything besides set up the
+          //DH key exchange.
           if (DATA[0] == SPECIAL_TYPE_PAIRING_RESPONSE)
           {
             Curve25519::dh2(DATA + 1, secret);
@@ -814,21 +832,31 @@ bool RFM69::listenForPairing(uint8_t deviceClass[16])
             //Reuse as something we can make all zeros
             memset(secret, 0, 8);
             cipherContext.setIV(secret, 8);
+            state = 2;
+          }
+        }
+        else if (state == 2)
+        {
+          if (DATA[0] == SPECIAL_TYPE_PAIRING_CONFIG)
+          {
+            cipherContext.decrypt(DATA + 1, DATA + 1, 48);
 
-            cipherContext.decrypt(DATA + 33, DATA + 33, 48);
-            if (cipherContext.checkTag(DATA + DATALEN + 48 + 33, 8))
+            if (cipherContext.checkTag(DATA + DATALEN + 1 + 48, 8))
             {
-              if (DATA[33 + 32] < 7)
+              //Check for a correct setting on the RF profile
+              if (DATA[1 + 32] < 8)
               {
                 //Write the whole profile to EEPROM
-                for (int i = 0; i < (32 + 1 + 2); i++)
+                for (int i = 0; i < (32 + 1 + 2 + 1); i++)
                 {
-                  EEPROM.update(eepromAddr + i, DATA[33 + i]);
+                  EEPROM.update(eepromAddr + i, DATA[1 + i]);
                 }
 
-                defaultChannel.setChannelKey(DATA + 33);
-                setProfile(DATA[33 + 32]);
-                setChannelNumber(((uint16_t *)(DATA + 33 + 32 + 1))[0]);
+                defaultChannel.setChannelKey(DATA + 1);
+                setProfile(DATA[1 + 32]);
+                setChannelNumber(((uint16_t *)(DATA + 1 + 32))[0]);
+                setNodeID(DATA[1 + 32 + 1 + 2]);
+
                 setPowerLevel(oldPowerLevel);
                 debug("Paired!");
                 return 1;
@@ -854,7 +882,7 @@ bool RFM69::listenForPairing(uint8_t deviceClass[16])
   setPowerLevel(oldPowerLevel);
 }
 
-bool RFM69::pairWithRemote()
+bool RFM69::pairWithRemote(uint8_t nodeID)
 {
   uint8_t oldKey[32];
   uint8_t pairingKey[32];
@@ -914,10 +942,14 @@ bool RFM69::pairWithRemote()
           //need to send them the key
           memcpy(buf + 1, smallBuffer, 32);
 
+          rawSendSG1(buf, 1 + 32, true, -4, 0, 0, HEADER_TYPE_SPECIAL);
+          delay(1500);
+
           //Now we just need to send the actual connection parameters.
-          memcpy(buf + 1 + 32, oldKey, 32);
-          buf[1 + 32 + 32] += oldProfile;
-          ((uint16_t *)&buf[1 + 32 + 32 + 1])[0] = oldChannel;
+          memcpy(buf + 1, oldKey, 32);
+          buf[1 + 32] += oldProfile;
+          ((uint16_t *)&buf[1 + 32 + 1])[0] = oldChannel;
+          buf[1 + 32 + 1 + 2] = nodeID;
 
           cipherContext.setKey(secret, 32);
           memset(smallBuffer, 0, 8);
@@ -925,14 +957,14 @@ bool RFM69::pairWithRemote()
           cipherContext.setIV(smallBuffer, 0);
 
           //Encrypt everything after the pubkey, using the shared secret
-          cipherContext.encrypt(buf + 32 + 1, buf + 32 + 1, 32 + 1 + 2);
-          cipherContext.computeTag(buf + 1 + 32 + 32 + 1 + 2, 8);
+          cipherContext.encrypt(buf + 1, buf + 1, 32 + 1 + 2);
+          cipherContext.computeTag(buf + 1 + 32 + 1 + 2, 8);
 
           //Send the whole thing in a packet.
           //Note that this is going to encrypt everything again.
           //We just accept the slight bit of extra waste, to be able to
           //Have all th packets use the same format.
-          rawSendSG1(buf, 1 + 32 + 32 + 1 + 2 + 8, true, 3, 0, 0, HEADER_TYPE_SPECIAL);
+          rawSendSG1(buf, 1 + 32 + 1 + 2 + 8, true, 3, 0, 0, HEADER_TYPE_SPECIAL);
         }
       }
     }
@@ -1053,6 +1085,7 @@ bool RFM69::decodeSG1(uint8_t *key)
       }
       debug("rb");
       DATALEN = 0;
+      fhssOffset = 0;
       return true;
     }
     debug("irb");
@@ -1080,7 +1113,7 @@ bool RFM69::decodeSG1(uint8_t *key)
       (rxHintSequence == defaultChannel.altPrivateHintSequence) |
       (rxHintSequence == defaultChannel.altPrivateWakeSequence))
   {
-
+    fhssOffset = 0;
     //NodeID+timestamp is after hint
     memcpy(rxIV, tmpBuffer + 3, 8);
 
@@ -1174,7 +1207,6 @@ bool RFM69::decodeSG1(uint8_t *key)
         }
       }
     }
-
 
     //By this point, datalen is the FEC encodable par after taking off the header and decoding.
 
@@ -1379,6 +1411,15 @@ bool RFM69::checkBeaconSleep()
     return true;
   }
   long waitTime;
+
+  if(channelNumber>1000L)
+  {
+    //Randomly hop around if we haven't gotten anything in a while.
+    if(monotonicMillis()-lastTimeSync > 60000L)
+    {
+      fhssOffset=xorshift32();
+    }
+  }
   //If our time is marked as accurate, or if we have gotten
   //a packet in the last minute we can use short beacons
   if ((systemTimeTrust & TIMETRUST_ACCURATE) || lastSG1Message > (monotonicMillis() - 60000L))
@@ -1389,7 +1430,7 @@ bool RFM69::checkBeaconSleep()
   else
   {
     //Otherwise we have to send a whole packet
-    rawSendSG1(0, 0, getAutoTxPower(), getAutoTxPower() > 6, 0, 0, HEADER_TYPE_RELIABLE_SPECIAL);
+    rawSendSG1(0, 0, getAutoTxPower(), getAutoTxPower() > -8, 0, 0, HEADER_TYPE_RELIABLE_SPECIAL);
     waitTime = (40000L + (bitTime + 1200));
   }
 
@@ -1417,7 +1458,8 @@ bool RFM69::checkBeaconSleep()
       }
     }
   }
-  sleep();
+  //Don't actually sleep, user can do that
+  //sleep();
   return 0;
 }
 
@@ -1598,8 +1640,39 @@ void RFM69::setChannelNumber(uint16_t n)
   uint32_t minf = 0;
   uint32_t maxf = 0;
 
-  uint32_t freq = 0;
+  //Back to hz
+  uint32_t spacing = channelSpacing*1000L;
+
+  //Reset the FHSS resync search when actually getting something
+  if (channelNumber != n)
+  {
+    fhssOffset = 0;
+  }
+
   channelNumber = n;
+
+  if (channelNumber > 1000L)
+  {
+    uint32_t prng = n;
+    doTimestamp();
+    //Get the time in ~60ms increments
+    //Add the channel number to the time as an offset.
+    //This is so the dead time while switching channels isn't always
+    //at the same time for every hop sequence, so it isn't wasted.
+    uint32_t time = ((systemTime+(uint64_t)n) >> 16);
+
+
+    //Now we add the time and the channel, and permute it with the PRNG.
+    prng ^= time;
+    prng ^= prng << 13;
+    prng ^= prng >> 17;
+    prng ^= prng << 4;
+
+    //Use that as the actual channel.
+    //Limit 255 channels of hopping no matter what
+    n = (prng + fhssOffset) % 255;
+  }
+
   if (freqBand == RF69_915MHZ)
   {
     minf = 902000000UL;
@@ -1616,15 +1689,17 @@ void RFM69::setChannelNumber(uint16_t n)
     maxf = 434790000UL;
   }
 
-  //We exclude 2 channel widths from the bottom of the range.
+  //We exclude 1 channel widths from the bottom of the range.
   //This is so that low-numbered channels will naturally not overlap with
   //the same channels in different bandwidths.
-  minf += (channelSpacing * 2L);
+  minf += spacing;
 
-  uint16_t totalChannels = ((maxf - minf) / channelSpacing);
+  uint16_t totalChannels = ((maxf - minf) / spacing);
 
   //Min frequency, go up to the center frequency of ch0, then go up to the selected channel
-  setFrequency(minf + (channelSpacing / 2) + (channelSpacing * (channelNumber % totalChannels)));
+  setFrequency(minf + (spacing / 2) + (spacing * (n % totalChannels)));
+  debug("frq");
+  debug(minf + (spacing / 2) + (spacing * (n % totalChannels)));
 }
 
 void RFM69::getEntropy(int changes)

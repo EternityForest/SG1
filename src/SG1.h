@@ -395,7 +395,7 @@ class RFM69 {
     
     void addEntropy(uint32_t x);
 
-    unsigned long monotonicMillis();
+    static unsigned long monotonicMillis();
     static void addSleepTime(unsigned long t);
     virtual bool _receiveDone();
 
@@ -417,7 +417,7 @@ class RFM69 {
     bool isSpecialType();
 
     //Sets the remote's address to the current channel key.
-    bool pairWithRemote();
+    bool pairWithRemote(uint8_t nodeID);
     bool listenForPairing(uint8_t deviceClass[16]);
 
     //Used internally by the system to track if ew got a special message
@@ -432,6 +432,9 @@ class RFM69 {
     //Or send a message that doesn't request one.
     //It's used to track failed requests so we can increase power appropriately.
     uint8_t requestedReply=0;
+
+    //Used to track what we're doing when performing a sync search for FHSS data.
+    uint8_t fhssOffset =0;
 
 
     //Most recent timestamp that re have decoded.
@@ -477,9 +480,9 @@ void urandom(uint8_t * target, uint8_t len);
 
 #endif
 
-//#define debug(x) Serial.println((x));Serial.flush()
+#define debug(x) Serial.println((x));Serial.flush()
 //#define REGISTER_DETAIL
-#define debug(x)
+//#define debug(x)
 
 
 //WakeRequests keep track of channels that we want to send wake requests
