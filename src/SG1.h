@@ -411,6 +411,9 @@ class RFM69 {
     void doPerPacketTimeFunctions(uint8_t rxTimeTrust);
     void initSystemTime();
 
+    //used to prevent unneccesary frequency changes
+    uint32_t currentFrequency=0;
+
 
     uint8_t _headerTimeTrust();
     bool _recieveDone();

@@ -153,6 +153,11 @@ uint32_t RFM69::getFrequency()
 // set the frequency (in Hz)
 void RFM69::setFrequency(uint32_t freqHz)
 {
+  if(currentFrequency == freqHz)
+  {
+    return;
+  }
+  currentFrequency=freqHz;
   uint8_t oldMode = _mode;
   if (oldMode == RF69_MODE_TX) {
     setMode(RF69_MODE_RX);
@@ -296,11 +301,9 @@ bool RFM69::trySend(const void* buffer, uint8_t bufferSize)
   }
   if (!canSend())
   {
-    debug("no");
    return false;
   }
   sendFrame(buffer, bufferSize);
-  debug("snt");
   return true;
 }
 
@@ -349,7 +352,7 @@ void RFM69::sendFrame(const void* buffer, uint8_t bufferSize)
   //Predict how long it will take, instead of polling the entire time
   delayMicroseconds((bitTime*(40L+32+8+(bufferSize*8L))));
   uint32_t txStart = micros();
-  
+
   while (digitalRead(_interruptPin) == 0 && millis() - txStart < RF69_TX_LIMIT_MS); // wait for DIO0 to turn HIGH signalling transmission finish
   
   //while ((readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PACKETSENT) == 0x00)

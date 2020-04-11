@@ -324,8 +324,10 @@ uint8_t RFM69::PAYLOADLEN;
 int16_t RFM69::RSSI; // most accurate RSSI during reception (closest to the reception)
 volatile bool RFM69::_haveData;
 
-uint8_t tmpBuffer[128];
-uint8_t smallBuffer[128];
+//Two tmp buffers sized to hold an entire packet, rounded up to 80
+//for overflow protection, and so we can use the very end for misc scratchpad stuff
+uint8_t tmpBuffer[80];
+uint8_t smallBuffer[80];
 
 int8_t RFM69::getAutoTxPower()
 {
@@ -400,12 +402,6 @@ void RFM69::sendSG1(const void *buffer, uint8_t bufferSize, uint8_t *challenge, 
   int8_t txPower = getAutoTxPower();
   //Reset the failed request tracking
   requestedReply = 0;
-
-  //Randomly hop around if we haven't gotten anything in a while.
-  if(monotonicMillis()-lastTimeSync > 60000L)
-  {
-    fhssOffset+=1;
-  }
  
   rawSendSG1(buffer, bufferSize, txPower > 10, txPower, challenge, key, HEADER_TYPE_UNRELIABLE);
 }
@@ -448,9 +444,14 @@ void RFM69::rawSendSG1(const void *buffer, uint8_t bufferSize, bool useFEC, int8
   header[1] |= _headerTimeTrust();
 
   //If the whole message would be big we have to turn off FEC
-  if (payloadSize > 64)
+  if (payloadSize > 18)
   {
     useFEC = false;
+  }
+  if(payloadSize>36)
+  {
+    Serial.println("SZ");
+    return;
   }
 
   //Round up to 4
@@ -467,6 +468,7 @@ void RFM69::rawSendSG1(const void *buffer, uint8_t bufferSize, bool useFEC, int8
   {
     header[1] |= HEADER_TIME_TRUST_FIELD;
   }
+  uint8_t padding =0;
   //First calculate size, then encrypt, then golay
   if (useFEC)
   {
@@ -479,6 +481,7 @@ void RFM69::rawSendSG1(const void *buffer, uint8_t bufferSize, bool useFEC, int8
     while (payloadSize % 3)
     {
       bufferSize += 1;
+      padding+=1;
       payloadSize = bufferSize + 8 + 8 + 3;
     }
 
@@ -534,8 +537,26 @@ retry:
     cipherContext.addAuthData(useChallenge, 8);
   }
 
+ 
   //Leave room for hint and IV
-  cipherContext.encrypt((uint8_t *)smallBuffer + 3 + 8, (uint8_t *)buffer, bufferSize);
+  //Don't include padding bytes
+  cipherContext.encrypt((uint8_t *)smallBuffer + 3 + 8, (uint8_t *)buffer, bufferSize-padding);
+  
+  //This is the zero we will encrypt
+  smallBuffer[79]=0;
+
+  //Now encrypt some zeros for padding
+  //Only 2 padding bytes can ever be needed.
+  if(padding>0)
+  {
+    cipherContext.encrypt((uint8_t *)smallBuffer + 3 + 8 + bufferSize-padding, (uint8_t *)(smallBuffer+79), 1);
+  }
+  if(padding==2)
+  {
+    cipherContext.encrypt((uint8_t *)smallBuffer + 3 + 8 + (bufferSize-padding)+1, 
+    (uint8_t *)(smallBuffer+79), 1);
+  }
+
   //memcpy((uint8_t *)smallBuffer+3+8, (uint8_t *)buffer, bufferSize);
   cipherContext.computeTag(smallBuffer + 3 + 8 + bufferSize, 8);
 
@@ -553,6 +574,15 @@ retry:
   }
 
   golay_block_encode(header, tmpBuffer);
+
+  if(useChallenge==0)
+  {
+    //Randomly hop around if we haven't gotten anything in a while.
+    if(monotonicMillis()-lastTimeSync > 60000L)
+    {
+      fhssOffset=xorshift32();
+    }
+  }
 
   unsigned long st = millis();
   //More than 15ms, and we do a full recalc.
@@ -707,6 +737,10 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
     {
       lastAccurateTimeSet = monotonicMillis();
     }
+    //Having them set our timestamp is pretty much the closest thing
+    //We have to a "connection", so we send this as kind of an acknowledge 
+    //for stuff that wants to know if we're there, like FHSS
+    rawSendSG1(tmpBuffer, 0, true, getAutoTxPower(), rxIV, 0, HEADER_TYPE_SPECIAL);
   }
 }
 
@@ -1006,7 +1040,7 @@ bool RFM69::decodeSG1(uint8_t *key)
   int8_t txRSSI = ((rxHeader[2] & 0b00001111) * 4) - 24;
 
   //Buffer overflow prevention
-  if (tmpDatalen > 128)
+  if (tmpDatalen > 80)
   {
     debug("long");
     debug(tmpDatalen);
@@ -1131,6 +1165,7 @@ bool RFM69::decodeSG1(uint8_t *key)
     //we have to check its time
     if (isReply())
     {
+      debug("grp");
       cipherContext.addAuthData((awaitReplyToIv), 8);
     }
     else
@@ -1174,7 +1209,7 @@ bool RFM69::decodeSG1(uint8_t *key)
             debug("ofset");
             debug((int32_t)(diff / 1000000LL));
             int8_t autoPwr = getAutoTxPower();
-            rawSendSG1(tmpBuffer, 0, autoPwr > 10, autoPwr, rxIV, 0, HEADER_TYPE_REPLY_SPECIAL);
+            rawSendSG1(tmpBuffer, 0, autoPwr >= -4, autoPwr, rxIV, 0, HEADER_TYPE_REPLY_SPECIAL);
           }
         }
       }
@@ -1698,8 +1733,6 @@ void RFM69::setChannelNumber(uint16_t n)
 
   //Min frequency, go up to the center frequency of ch0, then go up to the selected channel
   setFrequency(minf + (spacing / 2) + (spacing * (n % totalChannels)));
-  debug("frq");
-  debug(minf + (spacing / 2) + (spacing * (n % totalChannels)));
 }
 
 void RFM69::getEntropy(int changes)
