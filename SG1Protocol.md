@@ -213,9 +213,21 @@ the 32 byte channel key, followed by the one byte RF profile, followed by the
 
 ## Channel Numbers
 
-To convert a ch number to a frequency, first compute the number of channels that fit in the regional frequency band. Then subtract the bottom two, and the frequency is the center of the Nth channel, modulo the number of channels should the user select one that is too high.
+To convert a ch number to a frequency, first compute the number of channels that fit in the regional frequency band. Then subtract the bottom channel.
 
-This always reserves 2x the bandwidth at the bottom of the band for lower bandwidth applications.
+The frequency is then center of the Nth channel, modulo the number of channels should the user select one that is too high.
+
+This always reserves some bandwidth at the bottom of the band for lower bandwidth applications.
+
+Channels above 1000 are actually hop patterns.
+
+## FHSS 
+
+FHSS is currently specified by the reference implementation. Frequencies always hop
+every 2**16 microseconds. An offset is used so that different hop patterns do not
+change over at the same time.
+
+Only the middle half of any hop slot should be used, for maximum tolerance of misalignment.
 
 
 ## Gateway protocol

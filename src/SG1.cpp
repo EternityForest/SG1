@@ -85,12 +85,12 @@ ChaChaPoly cipherContext;
 #define HEADER_TYPE_FIELD 0b1110000
 
 //Same as normal unreliable messages.
-#define HEADER_TYPE_SPECIAL 0b0000000
+#define HEADER_TYPE_SPECIAL       0b0000000
 
-#define HEADER_TYPE_UNRELIABLE 0b0010000
-#define HEADER_TYPE_RELIABLE 0b0100000
+#define HEADER_TYPE_UNRELIABLE    0b0010000
+#define HEADER_TYPE_RELIABLE      0b0100000
 //Any reply types will always have bit 6 set
-#define HEADER_TYPE_REPLY 0b1000000
+#define HEADER_TYPE_REPLY         0b1000000
 #define HEADER_TYPE_REPLY_SPECIAL 0b1010000
 
 #define HEADER_TYPE_RELIABLE_SPECIAL 0b0110000
@@ -110,7 +110,8 @@ static uint32_t lastAccurateTimeSet = 0;
 //We synced either with TIMETRUST_ACCURATE, TIMETRUST_LOCAL, or with a remote node.
 //basically, it's used for determining if we should be using
 //A random FHSS search
-static uint32_t lastTimeSync = 0;
+//Note this can't start at zero, because micros starts at zero
+static uint32_t lastTimeSync = 7998795;
 static unsigned long arduinoMillisOffset = 0;
 
 static union {
@@ -163,7 +164,43 @@ void RFM69::initSystemTime()
     }
   }
 }
+
+void RFM69::syncFHSS(uint16_t attempts)
+{
+  fhssOffset=xorshift32();
+  for(int i=0;i<attempts;i++)
+  {
+    //Try a random FHSS channel and listen for replies, 
+    //but no matter what  always go back to the normal sequence at the end
+    fhssOffset+=1;
+    rawSendSG1(0, 0, true, getAutoTxPower(), 0, 0, HEADER_TYPE_RELIABLE_SPECIAL);
+     for(int j=0;j<100L;j++)
+      {
+        delay(1);
+        if(receiveDone())
+        {
+          debug("r");
+          if(decodeSG1())
+          {
+            debug(j);
+            fhssOffset=0;
+            return;
+          }
+          if(receivedReply())
+          {
+            fhssOffset=0;
+            debug("Sync!");
+            debug(j);
+            return;
+          }
+        }
+      }
+  }
+
+  fhssOffset=0;
+}
 static unsigned long systemTimeMicros = 0;
+
 
 void doTimestamp(uint32_t adjustment=0)
 {
@@ -173,7 +210,7 @@ void doTimestamp(uint32_t adjustment=0)
   noInterrupts();
   unsigned long x = micros();
   unsigned long x2 = x - systemTimeMicros;
-  int64_t y = x2 - adjustment;
+  int64_t y = x2 + adjustment;
 
   //Clock doesn't go backwards except when actually set.
 
@@ -403,20 +440,20 @@ void RFM69::sendSG1(const void *buffer, uint8_t bufferSize, uint8_t *challenge, 
   //Reset the failed request tracking
   requestedReply = 0;
  
-  rawSendSG1(buffer, bufferSize, txPower > 10, txPower, challenge, key, HEADER_TYPE_UNRELIABLE);
+  rawSendSG1(buffer, bufferSize, txPower > -5, txPower, challenge, key, HEADER_TYPE_UNRELIABLE);
 }
 
 void RFM69::sendSG1Request(const void *buffer, uint8_t bufferSize)
 {
   int8_t txPower = getAutoTxPower();
   requestedReply += 1;
-  rawSendSG1(buffer, bufferSize, txPower > 10, txPower, 0, 0, HEADER_TYPE_RELIABLE);
+  rawSendSG1(buffer, bufferSize, txPower > -5, txPower, 0, 0, HEADER_TYPE_RELIABLE);
 }
 
 void RFM69::sendSG1Reply(const void *buffer, uint8_t bufferSize)
 {
   int8_t txPower = getAutoTxPower();
-  rawSendSG1(buffer, bufferSize, txPower > 10, txPower, rxIV, 0, HEADER_TYPE_REPLY);
+  rawSendSG1(buffer, bufferSize, txPower > -5, txPower, rxIV, 0, HEADER_TYPE_REPLY);
 }
 
 void RFM69::rawSendSG1(const void *buffer, uint8_t bufferSize, bool useFEC, int8_t txPower,
@@ -575,19 +612,12 @@ retry:
 
   golay_block_encode(header, tmpBuffer);
 
-  if(useChallenge==0)
-  {
-    //Randomly hop around if we haven't gotten anything in a while.
-    if(monotonicMillis()-lastTimeSync > 60000L)
-    {
-      fhssOffset=xorshift32();
-    }
-  }
+
 
   unsigned long st = millis();
-  //More than 15ms, and we do a full recalc.
+  //More than 3ms, and we do a full recalc.
   //This is neccesary to ensure that we always send precision time.
-  while ((millis() - st) < 15)
+  while ((millis() - st) < 3)
   {
     //trySend does the length byte for you
     //it also expects just the payload length.
@@ -598,7 +628,7 @@ retry:
       lastSentSG1 = monotonicMillis();
       return;
     }
-    delay(xorshift32() % 8);
+    delayMicroseconds(xorshift32() % 1024);
   }
 
   //Time to try again, we weren't able to send
@@ -708,14 +738,22 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
   //If we trust this packet more than the clock,
   //Set the clock from this.
 
-  //Packet is secure, and very close to our time, and at least as trusted.
-  //We are going to perform a small adujstment, adjusting our time
-  //This has already passed replay protection.
-  if ((rxTimeTrust >= systemTimeTrust) && (rxTimeTrust >= TIMETRUST_SECURE) && (abs(diff) < 2000000LL))
+  if((systemTimeTrust&TIMETRUST_LOCAL))
+  {
+    debug("lc");
+    //Local time trust absolutely blocks anything else
+    return;
+  }
+
+  //Packet is secure, and very close to our time, this lets us do small
+  //adjustments without challenge response
+  if ( ((rxTimeTrust & TIMETRUST_ACCURATE)||((systemTimeTrust&TIMETRUST_ACCURATE)==0))
+   && (rxTimeTrust >= TIMETRUST_SECURE) && (abs(diff) < 2000000LL) )
   {
     debug("adj");
     doTimestamp(diff / 2);
     lastTimeSync=monotonicMillis();
+    //Stop the FHSS search when we are actually connected.
   }
 
   //Otherwise, we have to a jump
@@ -737,10 +775,11 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
     {
       lastAccurateTimeSet = monotonicMillis();
     }
+    lastTimeSync=monotonicMillis();
     //Having them set our timestamp is pretty much the closest thing
     //We have to a "connection", so we send this as kind of an acknowledge 
     //for stuff that wants to know if we're there, like FHSS
-    rawSendSG1(tmpBuffer, 0, true, getAutoTxPower(), rxIV, 0, HEADER_TYPE_SPECIAL);
+    rawSendSG1(tmpBuffer, 0, true, getAutoTxPower(), 0, 0, HEADER_TYPE_SPECIAL);
   }
 }
 
@@ -1119,7 +1158,6 @@ bool RFM69::decodeSG1(uint8_t *key)
       }
       debug("rb");
       DATALEN = 0;
-      fhssOffset = 0;
       return true;
     }
     debug("irb");
@@ -1147,7 +1185,6 @@ bool RFM69::decodeSG1(uint8_t *key)
       (rxHintSequence == defaultChannel.altPrivateHintSequence) |
       (rxHintSequence == defaultChannel.altPrivateWakeSequence))
   {
-    fhssOffset = 0;
     //NodeID+timestamp is after hint
     memcpy(rxIV, tmpBuffer + 3, 8);
 
@@ -1185,31 +1222,36 @@ bool RFM69::decodeSG1(uint8_t *key)
       {
         int64_t diff = (getPacketTimestamp() - ((rxTime - ((PAYLOADLEN * bitTime) + 400LL + 400LL))));
         //We are going to try to maintain tight timing
-        //100ms is the limit before we tell them.
+        //100ms is the limit before we tell them. We need the tight sync
+        //for FHSS, so use 5ms when that is enabled.
         //Can't reply to a reply
 
         //For now, we are just going to automatically reply to all these
         //RELIABLE_SPECIAL with the current time.
         //Todo??
-        if (((abs(diff) > (100000LL)) && (!isReply())) ||
+        if (((abs(diff) > (5000LL)) && (!isReply())) ||
             ((rxHeader[1] & HEADER_TYPE_FIELD) == HEADER_TYPE_RELIABLE_SPECIAL))
         {
-
-          //Don't send replies if they actually requested one, leave that to
-          //application code.
-          //However, should the packet be more than 5s off, we can't pass this to application
-          //code anyway
-          if (((rxHeader[1] & HEADER_TYPE_FIELD) == HEADER_TYPE_UNRELIABLE) ||
-              (abs(diff) > 5000000LL) ||
-              ((rxHeader[1] & HEADER_TYPE_FIELD) == HEADER_TYPE_RELIABLE_SPECIAL))
+          
+          if((channelNumber>1000) || (abs(diff) > (100000LL)))
           {
-            ///the reason we can do this automatically without corrupting state is
-            //Replies can't be replied to, so sending this won't overwrite the value that
-            //Says what we are watching for, if we were watching for something
-            debug("ofset");
-            debug((int32_t)(diff / 1000000LL));
-            int8_t autoPwr = getAutoTxPower();
-            rawSendSG1(tmpBuffer, 0, autoPwr >= -4, autoPwr, rxIV, 0, HEADER_TYPE_REPLY_SPECIAL);
+            //Don't send replies if they actually requested one, leave that to
+            //application code.
+            //However, should the packet be more than 5s off, we can't pass this to application
+            //code anyway, so there can be no legit reply.
+            if (((rxHeader[1] & HEADER_TYPE_FIELD) == HEADER_TYPE_UNRELIABLE) ||
+                ((rxHeader[1] & HEADER_TYPE_FIELD) == HEADER_TYPE_RELIABLE_SPECIAL) ||
+                (abs(diff) > (5000000LL))
+                )
+            {
+              ///the reason we can do this automatically without corrupting state is
+              //Replies can't be replied to, so sending this won't overwrite the value that
+              //Says what we are watching for, if we were watching for something
+              debug("ofset");
+              debug((int32_t)(diff));
+              int8_t autoPwr = getAutoTxPower();
+              rawSendSG1(tmpBuffer, 0, autoPwr >= -4, autoPwr, rxIV, 0, HEADER_TYPE_REPLY_SPECIAL);
+            }
           }
         }
       }
@@ -1258,6 +1300,8 @@ bool RFM69::decodeSG1(uint8_t *key)
       debug(tmpBuffer[3 + 8]);
       return false;
     }
+
+
     memcpy(DATA, tmpBuffer + 3 + 8, remainingDataLen - (3 + 8 + 8));
 
     rxPathLoss = txRSSI - _rssi;
@@ -1447,14 +1491,7 @@ bool RFM69::checkBeaconSleep()
   }
   long waitTime;
 
-  if(channelNumber>1000L)
-  {
-    //Randomly hop around if we haven't gotten anything in a while.
-    if(monotonicMillis()-lastTimeSync > 60000L)
-    {
-      fhssOffset=xorshift32();
-    }
-  }
+
   //If our time is marked as accurate, or if we have gotten
   //a packet in the last minute we can use short beacons
   if ((systemTimeTrust & TIMETRUST_ACCURATE) || lastSG1Message > (monotonicMillis() - 60000L))
@@ -1678,12 +1715,6 @@ void RFM69::setChannelNumber(uint16_t n)
   //Back to hz
   uint32_t spacing = channelSpacing*1000L;
 
-  //Reset the FHSS resync search when actually getting something
-  if (channelNumber != n)
-  {
-    fhssOffset = 0;
-  }
-
   channelNumber = n;
 
   if (channelNumber > 1000L)
@@ -1694,8 +1725,9 @@ void RFM69::setChannelNumber(uint16_t n)
     //Add the channel number to the time as an offset.
     //This is so the dead time while switching channels isn't always
     //at the same time for every hop sequence, so it isn't wasted.
-    uint32_t time = ((systemTime+(uint64_t)n) >> 16);
-
+    uint64_t time = systemTime+(uint64_t)n;
+    
+    time=time >> 24;
 
     //Now we add the time and the channel, and permute it with the PRNG.
     prng ^= time;
@@ -1704,8 +1736,8 @@ void RFM69::setChannelNumber(uint16_t n)
     prng ^= prng << 4;
 
     //Use that as the actual channel.
-    //Limit 255 channels of hopping no matter what
-    n = (prng + fhssOffset) % 255;
+    //Limit 256 channels of hopping no matter what
+    n = (prng + fhssOffset) % 256;
   }
 
   if (freqBand == RF69_915MHZ)

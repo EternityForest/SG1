@@ -295,7 +295,7 @@ class RFM69 {
 
     RFM69(uint8_t slaveSelectPin=RF69_SPI_CS, uint8_t interruptPin=RF69_IRQ_PIN, bool isRFM69HW=false);
 
-    bool initialize(uint8_t freqBand, uint8_t networkID=1);
+    bool initialize(uint8_t freqBand);
 
     void setNetwork(uint8_t networkID);
     void getEntropy(int changes=128);
@@ -399,13 +399,15 @@ class RFM69 {
     static void addSleepTime(unsigned long t);
     virtual bool _receiveDone();
 
+    void syncFHSS(uint16_t attempts=400);
+
+
   protected:
     static void isr0();
     void interruptHandler();
-    virtual void interruptHook(uint8_t CTLbyte) {};
     static volatile bool _haveData;
     virtual void sendFrame(const void* buffer, uint8_t size);
-    bool RFM69::trySend(const void* buffer, uint8_t bufferSize);
+    bool trySend(const void* buffer, uint8_t bufferSize);
 
     void recalcBeaconBytes();
     void doPerPacketTimeFunctions(uint8_t rxTimeTrust);
@@ -441,7 +443,7 @@ class RFM69 {
 
 
     //Most recent timestamp that re have decoded.
-    int64_t channelTimestampHead=0;
+    int64_t channelTimestampHead=-9223372036854775807LL;
 
     //Are we waiting for a reply
     uint8_t awaitReplyToIv[8];

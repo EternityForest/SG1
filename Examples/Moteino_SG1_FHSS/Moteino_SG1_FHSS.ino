@@ -53,7 +53,7 @@ void setup()
   radio.setChannelNumber(1599);
 
   //Manual, use -127 to set automatic.
-  radio.setPowerLevel(-8);
+  radio.setPowerLevel(-4);
   
   //Every node on a channel needs a unique ID byte
   radio.setNodeID('A');
@@ -71,6 +71,8 @@ void setup()
   //Many devices can share a channel, the library will ignore messages for other channels.
 
   radio.setChannelKey((uint8_t *)key);
+
+  radio.syncFHSS();
 }
 
 unsigned long last = 0;
@@ -87,7 +89,7 @@ void loop()
   //unless you happen to be using millisecond-accurate synchronization like GPS.
 
   //Sync can't be allowed to drift more than 5 milliseconds, so you'll need a packet about once a minute, at least. And if you lose sync, you may regret it.
-  if ( ((millis() - last) > 100))
+  if ( ((millis() - last) > 1000))
   {
     radio.sendSG1((uint8_t *)pl, strlen(pl));
     last=millis();
@@ -120,5 +122,5 @@ void loop()
       Serial.println("]");
     }
   }
-  delay(1);
+  delay(2);
 }
