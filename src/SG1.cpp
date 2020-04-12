@@ -207,7 +207,6 @@ void doTimestamp(uint32_t adjustment=0)
   //Set systemTime to the correct value by adding the micros.
   //Adjustment adds up to that many micros but will never make the clock go
   //backwards.
-  noInterrupts();
   unsigned long x = micros();
   unsigned long x2 = x - systemTimeMicros;
   int64_t y = x2 + adjustment;
@@ -243,7 +242,6 @@ void doTimestamp(uint32_t adjustment=0)
     }
   }
   
-  interrupts();
 }
 
 int64_t RFM69::unixMicros(uint32_t adj)
@@ -354,11 +352,6 @@ void RFM69::setTime(int64_t time, uint8_t trust)
   interrupts();
 }
 
-uint8_t RFM69::DATA[RF69_MAX_DATA_LEN + 1];
-uint8_t RFM69::_mode; // current transceiver state
-uint8_t RFM69::DATALEN;
-uint8_t RFM69::PAYLOADLEN;
-int16_t RFM69::RSSI; // most accurate RSSI during reception (closest to the reception)
 volatile bool RFM69::_haveData;
 
 //Two tmp buffers sized to hold an entire packet, rounded up to 80
@@ -481,15 +474,19 @@ void RFM69::rawSendSG1(const void *buffer, uint8_t bufferSize, bool useFEC, int8
   header[1] |= _headerTimeTrust();
 
   //If the whole message would be big we have to turn off FEC
-  if (payloadSize > 18)
+  //To get the total under 64 bytes
+  if (payloadSize > 29)
   {
     useFEC = false;
   }
-  if(payloadSize>36)
+  //With header, that would exceed 64 bytes
+  if(payloadSize>58)
   {
     Serial.println("SZ");
     return;
   }
+
+  useFEC=true;
 
   //Round up to 4
   while (txPower % 4)
@@ -552,10 +549,11 @@ retry:
 
   //First 3 bytes of this are the hint. 4th byte is nodeid part of iv.
   smallBuffer[3] = nodeID;
-
+  noInterrupts();
   //Hint comes before the IV, and first IV byte is
   //NodeID so don't put the time in that
   memcpy(smallBuffer + 3 + 1, systemTimeBytes + 1, 7);
+  interrupts();
 
   //Skip hint sequence to get to the IV
   cipherContext.setIV(smallBuffer + 3, 8);
@@ -600,17 +598,29 @@ retry:
 
   if (useFEC)
   {
-    for (unsigned char i = 0; i < (bufferSize + 8 + 8 + 3); i += 3)
+    //We are computing this in reverse order, if we went forwared we would overwrite
+    //stuff as we went.
+
+    // Suppose we have 21 bytes to begin with.
+    // First we do the block starting at position 18(bytes 18,19,and 20)
+    // 20 is the last byte because of 0 based.
+
+    //Note that we have to do block 0, so we use i going below 0
+    //as the exit condition
+  
+    //Destinations always have +6 because we are leaving room for the header
+    for (int i = (bufferSize + 8 + 8 + 3); i >= 0; i -= 3)
     {
-      golay_block_encode(smallBuffer + i, tmpBuffer + 6 + (i * 2));
+      golay_block_encode(smallBuffer + i, smallBuffer + 6 + (i * 2));
     }
   }
   else
   {
-    memcpy(tmpBuffer + 6, smallBuffer, payloadSize);
+    //No FEC, just move into place.
+    memmove(smallBuffer + 6, smallBuffer, payloadSize);
   }
 
-  golay_block_encode(header, tmpBuffer);
+  golay_block_encode(header, smallBuffer);
 
 
 
@@ -623,7 +633,7 @@ retry:
     //it also expects just the payload length.
     //Without the len byte
 
-    if (trySend(tmpBuffer + 1, header[0] - 1))
+    if (trySend(smallBuffer + 1, header[0] - 1))
     {
       lastSentSG1 = monotonicMillis();
       return;
@@ -730,7 +740,7 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
   rxTimestamp = getPacketTimestamp();
 
   //This basically find out how far ahead their clock is
-  diff = rxTimestamp - (rxTime - ((PAYLOADLEN * bitTime) + 400LL + 400LL));
+  diff = rxTimestamp - (rxTime - ((((RAWPAYLOADLEN+1+4)*8 +40 ) * bitTime) + 400LL + 32LL+8LL));
 
   //#TODO: This expects that the clock does not get set in between
   //recieve and decode.
@@ -751,7 +761,8 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
    && (rxTimeTrust >= TIMETRUST_SECURE) && (abs(diff) < 2000000LL) )
   {
     debug("adj");
-    doTimestamp(diff / 2);
+    //0.75*diff
+    doTimestamp((diff /2) +(diff/4));
     lastTimeSync=monotonicMillis();
     //Stop the FHSS search when we are actually connected.
   }
@@ -803,6 +814,13 @@ bool RFM69::decodeSG1Header()
   {
     debug("badheader");
     debug(tmpBuffer[0]);
+    return false;
+  }
+  //We can't recover data that isn't actually there
+  //But we can remove extra bytes that shouldn't be there.
+  if(tmpBuffer[0]>(DATALEN+1))
+  {
+    debug("MSNG");
     return false;
   }
   return true;
@@ -980,7 +998,7 @@ bool RFM69::pairWithRemote(uint8_t nodeID)
   unsigned char state = 0;
 
   buf[0] = SPECIAL_TYPE_PAIRING_REQUEST;
-  rawSendSG1(buf, 48, true, 3, rxIV, 0, HEADER_TYPE_SPECIAL);
+  rawSendSG1(buf, 48, true, 3, 0, 0, HEADER_TYPE_SPECIAL);
 
   while ((millis() - now) < 15000)
   {
@@ -1060,6 +1078,7 @@ bool RFM69::decodeSG1(uint8_t *key)
 {
   int8_t _rssi = RSSI;
   gotSpecialPacket = false;
+  RAWPAYLOADLEN=PAYLOADLEN;
 
   if (decodeSG1Header() == false)
   {
@@ -1192,18 +1211,11 @@ bool RFM69::decodeSG1(uint8_t *key)
     //Based on the timestamp of the previous message.
     //We do that by adding in the authentication data.
 
-    cipherContext.clear();
-    cipherContext.setKey(defaultChannel.channelKey, 32);
-    cipherContext.setIV(rxIV, 8);
-
-    cipherContext.addAuthData(rxHeader, 3);
-
     //If it is not a reply, it has no challenge response properties and therefore
     //we have to check its time
     if (isReply())
     {
       debug("grp");
-      cipherContext.addAuthData((awaitReplyToIv), 8);
     }
     else
     {
@@ -1220,7 +1232,7 @@ bool RFM69::decodeSG1(uint8_t *key)
       //Don't bother to send stuff if we don't have a valid clock.
       if (systemTimeTrust >= TIMETRUST_CHALLENGERESPONSE)
       {
-        int64_t diff = (getPacketTimestamp() - ((rxTime - ((PAYLOADLEN * bitTime) + 400LL + 400LL))));
+        int64_t diff = getPacketTimestamp() - (rxTime - ((((RAWPAYLOADLEN+1+4)*8 +40 ) * bitTime) + 400LL + 32LL+8LL));
         //We are going to try to maintain tight timing
         //100ms is the limit before we tell them. We need the tight sync
         //for FHSS, so use 5ms when that is enabled.
@@ -1250,7 +1262,7 @@ bool RFM69::decodeSG1(uint8_t *key)
               debug("ofset");
               debug((int32_t)(diff));
               int8_t autoPwr = getAutoTxPower();
-              rawSendSG1(tmpBuffer, 0, autoPwr >= -4, autoPwr, rxIV, 0, HEADER_TYPE_REPLY_SPECIAL);
+              rawSendSG1(smallBuffer, 0, autoPwr >= -4, autoPwr, rxIV, 0, HEADER_TYPE_REPLY_SPECIAL);
             }
           }
         }
@@ -1285,6 +1297,17 @@ bool RFM69::decodeSG1(uint8_t *key)
       }
     }
 
+
+    cipherContext.clear();
+    cipherContext.setKey(defaultChannel.channelKey, 32);
+    cipherContext.setIV(rxIV, 8);
+
+    cipherContext.addAuthData(rxHeader, 3);
+
+    if(isReply())
+    {
+      cipherContext.addAuthData((awaitReplyToIv), 8);
+    }
     //By this point, datalen is the FEC encodable par after taking off the header and decoding.
 
     //Encrypted part starts after the 3 byte hint and 8 byte IV, since we already
@@ -1295,9 +1318,10 @@ bool RFM69::decodeSG1(uint8_t *key)
     if (!cipherContext.checkTag(tmpBuffer + (remainingDataLen - 8), 8))
     {
       debug("rbc");
-      debug(remainingDataLen);
+      debug(DATALEN);
       debug(tmpBuffer[remainingDataLen - 8]);
-      debug(tmpBuffer[3 + 8]);
+      //Not 3+8
+      debug(tmpBuffer[2 + 8]);
       return false;
     }
 
@@ -1334,18 +1358,24 @@ bool RFM69::decodeSG1(uint8_t *key)
       }
     }
 
-    //One reply per message only
-    if (isReply())
-    {
-      memset(awaitReplyToIv, 0, 8);
-      requestedReply = 0;
-    }
+    
 
     if (replayProtection)
     {
       doPerPacketTimeFunctions(rxTimeTrust);
     }
 
+
+    //One reply per message only, so delete the challenge we were waiting for
+    //responses to. This can't come before doPerPacketTimeFunctions,
+    //Because that packet can send a message that we really don't have about replies to
+    //and we need the lack of data in awaitReplyToIv to accurately reflect if
+    //we are still waiting.
+    if (isReply())
+    {
+      memset(awaitReplyToIv, 0, 8);
+      requestedReply = 0;
+    }
     if (isSpecialType())
     {
       /*HANDLE SYSTEM RESERVED PACKETS*/

@@ -152,7 +152,7 @@
   #define RF69_IRQ_PIN          2
 #endif
 
-#define RF69_MAX_DATA_LEN       128 // to take advantage of the built in AES/CRC we want to limit the frame size to the internal FIFO size (66 bytes - 3 bytes overhead - 2 bytes crc)
+#define RF69_MAX_DATA_LEN       66 // to take advantage of the built in AES/CRC we want to limit the frame size to the internal FIFO size (66 bytes - 3 bytes overhead - 2 bytes crc)
 #define CSMA_LIMIT              -90 // upper RX signal sensitivity threshold in dBm for carrier sense access
 #define RF69_MODE_SLEEP         0 // XTAL OFF
 #define RF69_MODE_STANDBY       1 // XTAL ON
@@ -229,11 +229,13 @@ class SG1Channel
 
 class RFM69 {
   public:
-    static uint8_t DATA[RF69_MAX_DATA_LEN+1]; // RX/TX payload buffer, including end of string NULL char
-    static uint8_t DATALEN;
-    static uint8_t PAYLOADLEN;
-    static int16_t RSSI; // most accurate RSSI during reception (closest to the reception). RSSI of last packet.
-    static uint8_t _mode; // should be protected?
+    uint8_t DATA[RF69_MAX_DATA_LEN+1]; // RX/TX payload buffer, including end of string NULL char
+    uint8_t DATALEN;
+    uint8_t PAYLOADLEN;
+    uint8_t RAWPAYLOADLEN;
+
+    int16_t RSSI; // most accurate RSSI during reception (closest to the reception). RSSI of last packet.
+    uint8_t _mode; // should be protected?
 
     bool keepRemotesAwake=false;
 

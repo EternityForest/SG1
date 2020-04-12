@@ -364,9 +364,6 @@ void RFM69::sendFrame(const void* buffer, uint8_t bufferSize)
   //250 us extra is needed for the TX startup time
   //300us for a margin
   delayMicroseconds((bitTime*(40L+32+8+(bufferSize*8L)))+250L+300L);
-  debug("txo");
-  debug(currentFrequency);
-
 
   uint32_t txStart = micros();
   while (digitalRead(_interruptPin) == 0 && millis() - txStart < RF69_TX_LIMIT_MS); // wait for DIO0 to turn HIGH signalling transmission finish
@@ -421,8 +418,6 @@ bool RFM69::_receiveDone() {
   
   if (_mode == RF69_MODE_RX && (PAYLOADLEN > 0))
   {
-    debug("rx");
-    debug(currentFrequency);
     setMode(RF69_MODE_STANDBY); // enables interrupts
   
     //Until the user actually calls the real
