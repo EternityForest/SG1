@@ -341,6 +341,10 @@ class RFM69 {
     //Sends a raw RFM69 packet.
     virtual void send(const void* buffer, uint8_t bufferSize);
 
+    virtual void sendSG1RT(const void* buffer, uint8_t bufferSize);
+    bool decodeSG1RT();
+
+
     //Sends an SG1 protocol packet
     virtual void sendSG1(const void* buffer, uint8_t bufferSize,uint8_t * challenge=0, uint8_t * key=0);
     
@@ -492,9 +496,9 @@ void urandom(uint8_t * target, uint8_t len);
 
 #endif
 
-//#define debug(x) Serial.println((x));Serial.flush()
+#define debug(x) Serial.println((x));Serial.flush()
 //#define REGISTER_DETAIL
-#define debug(x)
+//#define debug(x)
 
 
 //WakeRequests keep track of channels that we want to send wake requests

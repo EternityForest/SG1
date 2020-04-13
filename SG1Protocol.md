@@ -5,7 +5,7 @@ blobs of bytes over encrypted channels, optionally using forward error correctio
 resist noise.
 
 
-## Packet Structure
+## Packet Structure(SG1 Data packets and Beacons)
 
 
 ### Header(Always present)
@@ -274,3 +274,35 @@ very short serial links with almost nonexistant error rates.
 The first byte of a special packet always indicates the subtype.
 
 0, or empty packets are nulls that are only used as keepalives and time syncs.
+
+
+## RT Packets
+
+RT packets are used for transferring data quickly with far less overhead.
+
+They have an entirely different structure and much weaker message authentication,
+which is even more unsuitable for anything requiring security.
+
+They also lack the data needed to perform time sync and automatic TX power, so must
+be used along with periodic beacons or full data packets.
+
+Forwared error correction is not supported in any way, and the preamble should be reduced to around 20 bits.
+
+In addition, challenge response authentication is not supported in any way.
+
+This saves about 9 bytes per packet compared to standard packets, making things like DMX lighting control practical.
+
+### Structure
+
+### Hint(3 bytes)
+This is the 3 byte hint sequence, not FEC encoded in any way. The 4 status bits are still available.
+
+### IV(8 bytes)
+As usual, the first byte is the node ID and the other 7 are the system time, omitting the least significant byte.
+### Payload(N bytes)
+Arbitrary data, encrypted with ChaChaPoly.
+
+### MAC(4 bytes)
+This is the ChaCha mac, but no additional authenticated data is used.
+
+

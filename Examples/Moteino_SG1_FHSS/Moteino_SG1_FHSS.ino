@@ -62,7 +62,7 @@ void setup()
   //Set a random time. This allows things to work without a clock, but it makes the whole thing subject to replay attacks,
   //should the random time values ever overlap.
 
-  //In practice this would require many reboots of the system to work as an attack,
+  //In practice this would require many reboots of the m to work as an attack,
   // And so is almost certainly fine for home automation, weather stations, and the like,
   //In addition. the "selection" of replayable values would be limited to about a ten second window of matching packets.
   radio.setTime(null);

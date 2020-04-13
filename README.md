@@ -86,7 +86,29 @@ In the case of beacons, the data will always be 0.
 Note that there are several cases in which this will automatically send replies.
 It will reply to any short beacon frames with a beacon or wake mesaage.
 
-It will also send reply messages if the packet is 
+
+### radio.sendSG1RT(buffer, len)
+Sends an SG1RT packet. These have only 128 bits of overhead, but do not include forward error correction.  
+
+They also use a weak 2-byte mac, allowing you to occasionally send forged messages that appear as garbage data(1 in 65k fake messages may get through).
+
+You can't use these without also exchanging full data packets to sync the time,
+although there is quite a bit of misalignment tolerance.
+
+Because of the optimization for very low overhead, it is possible to mis-decode
+these packets even with perfect signal strength, if the clocks are not aligned.
+
+With totally misaligned clocks, 1 in ~65,000 packets may slip through and appear
+to be correct but return garbage, and zero correct packets can be recieved until the time is synced.
+
+
+### radio.decodeSG1RT()
+Attempt to decode the packet as an SG1 low overhead realtime message. Returns false
+and leaves data unchanged if it is not a low overhead message for this channel.
+
+This happens very fast, so you can try decoding a packet as both(And you usually have to, because RT packets don't work without perioding full packets to stay in
+sync, unless you disable replay attack protection.)
+
 
 ### int32_t radio.getFEI()
 Return the radio's measured frequency offset in Hz. If you have a particular two radios that don't seem to get along, you cat use this.
@@ -186,7 +208,7 @@ Beacons on the current channel are recieved as if they are 0 byte packets.
 ### radio.xorshift32()
 Simple non-secure 32 bit random number generator used for internal backoff timings. Reseeded automatically, and fast, but not secure.
 
-### radio.setTime(int64_t uinxMicros)
+### radio.setTime(int64_t uinxMicros,[trust])
 
 Set the time to any of 3 different types of value, and mark the time as locally
 set and therefore trusted. At least one node must do this!!
@@ -195,6 +217,26 @@ If 0, don't change anything. just mark the time. If using a random timestamp,
 it should be negative.
 
 Otherwise, it should be a UNIX timestamp in microseconds.
+
+If trust is supplied, you should explicitly indicate how trusted the time source is:
+
+```
+//XOR all three of these flags for the default trust level for a locally set
+//usable clock.
+#define TIMETRUST_CLAIM_TRUST 2
+#define TIMETRUST_SECURE 4
+//At least challenge response or something
+//equally trustworthy is needed to recieve packets.
+#define TIMETRUST_CHALLENGERESPONSE 8
+
+//ONLY set this if you are confident the time you are serving has 10-50ms accuracy
+//or better.
+#define TIMETRUST_ACCURATE 1
+
+//Set this flag if you have a local source of real time and don't want the system ////clock to be tampered with by any other node
+#define TIMETRUST_LOCAL 128
+```
+
 
 ### static radio.unixMicros(adj=0)
 Current system timestamp, either a positive real time, or negative random network time not referenced to an epoch. Set adj to something nonzero to add or remove time from it.  

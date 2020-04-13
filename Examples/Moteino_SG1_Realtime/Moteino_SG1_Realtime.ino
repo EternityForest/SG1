@@ -72,139 +72,87 @@ void setup()
   //Many devices can share a channel, the library will ignore messages for other channels.
 
   radio.setChannelKey((uint8_t *)key);
-
-  Serial.println(radio.readRSSI());
-
-  //RNG demo
-  Serial.println(radio.urandomRange(1, 100));
 }
 
 unsigned long last = 0;
-uint8_t attempts = 10;
+unsigned long lastrt = 0;
 
 
 void loop()
 {
-  // Set up a "buffer" for characters that we'll send:
 
-  const char * pl = "One Ring to rule them all\0\0";
-  const char * pl2 = "One Ring to Find Them\0\0";
+  const char * pl = "One ring to rule them all\0\0";
 
-  //LowPower.idle(SLEEP_15MS, ADC_OFF, TIMER2_ON, TIMER1_ON, TIMER0_ON,
-  //                SPI_ON, USART0_ON, TWI_OFF);
-
-
-  //Ever 3 seconds, send a request message. Also send every 100 milliseconds if we haven't got a reply yet
-  if ( ((millis() - last) > 3000))
+  //Every 10 seconds, send a  message.
+  
+  if ( ((millis() - last) > 10000L))
   {
-
-    //radio.send((uint8_t *)pl, strlen(pl));
-
-
-
-    Serial.println(radio.getAutoTxPower());
-
-    //Read the background noise level.
-    Serial.print("BGN:");
-    Serial.println(radio.readRSSI());
-    Serial.print("System clock: ");
-    Serial.println((int32_t)(radio.unixMicros()/1000000LL));
-    Serial.println("Path Loss:");
-    Serial.println(radio.rxPathLoss);
-
-    radio.sendSG1Request((uint8_t *)pl, strlen(pl));
-    Serial.print("Sent, TX pwr:");
-    Serial.print(radio.getAutoTxPower());
-    Serial.println("\n\n\n");
-    
+    radio.sendSG1((uint8_t *)pl, strlen(pl));
     last = millis();
+    Serial.println("Sent full packet");
+
+    //block sending rt packet for a bit, nodes can only handle so many
+    lastrt=millis();
+    
   }
 
 
-  //If we have not gotten a reply, we are going to
-  //Retry
-  else if (!radio.receivedReply())
+  //But every 500ms, send a short realtime message that uses less data
+  //But is not as secure or reliable.
+
+  //Note that these messages are impossible to decide without synchronized clocks,
+  //It won't work if you don't also exchange normal SG1 requests too
+
+  else if ( ((millis() - lastrt) > 500))
   {
-    //Allow 500ms, serial printing is slowing everything down
-    if ((millis() - last) > 500)
-    {
-      //Limit 10 attempts to resend
-      if (attempts)
-      {
-        attempts -= 1;
-        //radio.send((uint8_t *)pl, strlen(pl));
-        radio.sendSG1Request((uint8_t *)pl, strlen(pl));
-       
-        Serial.println("Retry");
-        Serial.print(millis()-last);
-           last = millis();
-      }
-    }
+
+    radio.sendSG1RT("RT", 2);
+    lastrt = millis();
   }
-
-  // now we are "connected" so we can reset the counter and enable retries
-  if (radio.receivedReply())
-  {
-    attempts = 10;
-  }
-
-
-
-
 
 
   // RECEIVING
 
-  // In this section, we'll check with the RFM69HCW to see
-  // if it has received any packets:
-
   while (radio.receiveDone()) // Got one!
   {
 
-    Serial.print("message [");
-
-    // The actual message is contained in the DATA array,
-    // and is DATALEN bytes in size:
-
-    for (byte i = 0; i < radio.DATALEN; i++)
-      Serial.print((char)radio.DATA[i]);
-
-    // RSSI is the "Receive Signal Strength Indicator",
-    // smaller numbers mean higher power.
-
-    Serial.print("], RSSI ");
+    Serial.print("Raw message,  RSSI: ");
     Serial.println(radio.RSSI);
 
-    //This is the FEI, a measure of the of frequency error
-    //between sender and reciever
-    Serial.print("FEI: ");
-    Serial.println(radio.getFEI());
+    //The way to know if something is an RT message is to try and decode it
+    if (radio.decodeSG1RT())
+    {
+        Serial.print("SG1 RT Decoded: [");
+      for (byte i = 0; i < radio.DATALEN; i++)
+      {
+        Serial.print((char)radio.DATA[i]);
+      }
 
-    if (radio.decodeSG1())
+      Serial.println("]");
+      
+    }
+
+    //Not an RT message, try decoding as a standard mesage.
+     if (radio.decodeSG1())
     {
       Serial.print("SG1 Decoded: [");
 
       // The actual message is contained in the DATA array,
       // and is DATALEN bytes in size:
-
       for (byte i = 0; i < radio.DATALEN; i++)
+      {
         Serial.print((char)radio.DATA[i]);
-
-      // RSSI is the "Receive Signal Strength Indicator",
-      // smaller numbers mean higher power.
-
+      }
+      
       Serial.println("]");
 
+      //Good practice to always handle requests, some nodes rely on
+      //them for time sync
       if (radio.isRequest())
       {
         //Send an empty message in response.
         radio.sendSG1Reply(0, 0);
         Serial.println("Sent reply");
-      }
-
-      if(radio.isReply())
-      {
-        Serial.println("Got reply");
       }
     }
   }
