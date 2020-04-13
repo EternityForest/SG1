@@ -32,6 +32,7 @@ setBitrate, setChannelFilter, setDeviation, and setChannelSpacing are available 
 
 Other available profiles:
 ```
+#define RF_PROFILE_CUSTOM 0
 #define RF_PROFILE_GFSK1200 1
 #define RF_PROFILE_GFSK4800 2
 #define RF_PROFILE_GFSK10K 3
@@ -40,33 +41,25 @@ Other available profiles:
 #define RF_PROFILE_GFSK250K 6
 ```
 
+*Be sure to set the profile to "custom" before changing the settings manually,
+or they could be overwritten*
+
 ### radio.setChannelNumber(41);
 
-SG1 works with channel numbers. The actual maximum number of these depends on the width and frequency
-band, but that's OK, we will automatically wrap around. 
+SG1 works with channel numbers. The actual maximum number of these depends on the width and frequency band, but that's OK, we will automatically wrap around. 
 
 NOTE: This library is alpha, THIS CHANNEL MAPPING ALGORITHM MAY CHANGE.
 
-The step size is equal to whatever channel width was set in the profile, so you'll need to be careful as channel 1 may be the same
-frequency as channel 2 with a different step size.
+The step size is equal to whatever channel width was set in the profile, so you'll need to be careful as channel 1 may be the same frequency as channel 2 with a different step size.
 
 You don't need to worry as much about interference with SG1 messages, we just ignore anything that doesn't have the same key as us.
 
 
-#### Algorithm:
-
-The channel number algorith is as follows:
-Start at the bottom of the frequency range, then increment by 500KHz N/100 times, wrapping to the bottom as needed.
-
-Now move up by half a channel width, and increment by channelWidth steps. 
-If you get higher than than (half a channel width below the top), wrap to half a channel width above the bottom.
-
-Do this N times.
-
-This gives a measure of predictability when using things with multiple different channel widths in one deployment.
-
 ### radio.setPowerLevel(-18);
 -127 enables auto TX power, which only works between SG1 nodes. This is real dBM, not an arbitrary 0-31 scale!.
+
+It is strongly suggested that you use auto TX power control.
+
 
 
 ### radio.readAllRegs();
@@ -83,11 +76,17 @@ This has to be a 32 byte random key that defines the channel. Only applies to SG
 If we are recieving, return true and go to standby  got a packet. If not, start recieving.
 
 ### radio.decodeSG1()
-Call after getting a packet. Returns true if message was a real SG1 encoded message on our channel key, and decodes the actual
-payload into data and datalen.
+Call after getting a packet. Returns true if message was a real SG1 encoded message on our channel key, and decodes the actual payload into data and datalen.
+
+Returns false for beacons and system traffic.
 
 Note that this will return true if the message was short beacon frame as well.
 In the case of beacons, the data will always be 0.
+
+Note that there are several cases in which this will automatically send replies.
+It will reply to any short beacon frames with a beacon or wake mesaage.
+
+It will also send reply messages if the packet is 
 
 ### int32_t radio.getFEI()
 Return the radio's measured frequency offset in Hz. If you have a particular two radios that don't seem to get along, you cat use this.
@@ -108,12 +107,19 @@ Note that up to 2 extra padding bytes may be added if the system decides Golay e
 
 ### radio.sendSG1Reply(uint8_t * data, uint8_t len)
 
-Same as sendSG1, but sends as a reply to the last message recieved. You can reply to anything, except a reply.
+Same as sendSG1, but sends as a reply to the last message recieved. You can reply to anything, except a reply, but it is not guaranteed to work if you reply to things
+other than requests.
+
+This is because messages may have not more than one reply, and the system will occasionally send automatic replies to unreliable packets to correct timing errors.
+
+The system will not do this for request messages, as it knows that the application
+will be sending them.
 
 ### radio.sendSG1Request(uint8_t * data, uint8_t len)
 
-Same as sendSG1, but marks as requesting a reply. There is no automatic replies or retransmission, because we want
-to avoid wasting bandwidth on messages that are only acknowledgements, so we let you do your own replies.
+Same as sendSG1, but marks as requesting a reply. There is no automatic replies or retransmission, because we want to avoid wasting bandwidth on messages that are only acknowledgements, so we let you do your own replies, and include useful data in them.
+
+
 
 ### radio.isReply(), radio.isRequest()
 
@@ -123,28 +129,31 @@ Note that replies will only ever be to the most recent non-reply you have sent,
 so if you get a reply, you know what it is.
 
 ### radio.receivedReply()
-Returns true if the most recent non-reply you sent has beed replied to. You can safely send a reply
-while listening for one, but you can only be listening for a reply to one packet at a time.
+Returns true if the most recent non-reply you sent has beed replied to. You can safely send a reply while listening for one, but you can only be listening for a reply to one packet at a time.
+
+
 
 ### radio.sleep()
 Turn the radio off, call radio.recieveDone() to wake.
 
 ### radio.checkBeaconSleep()
 
-Determine if sending a beacon is necessary, and listens for any replies.
+Determine if sending a beacon is necessary, and listens for any replies. If
+yyou want to use low power mode, the library is optimized for about 1 beacon per minute.
 
 As this is meant for low power operation, it will use real sleep mode while waiting,
 and may disrupt millis() and micros(), so use radio.monotonicMillis().
 
-If all of the following are true, puts the radio to sleep and returns False:
+Note that the accuracy of monotonicMillis() will still be limited by the RC oscillator timer.
+
+If all of the following are true, returns False:
 
 * No recieved data on the channel for 18 seconds
 * No response to the beacon within 60ms+500 bit times.
 
-This is the suggested way to enter sleep mode, as it first checks if
-the other nodes would rather we stay up.
+You can then call sleep() to sleep the radio. Call recieveDone() to wake up.
 
-Call recieveDone() to wake up.
+
 
 ### radio.keepRemotesAwake
 
@@ -205,5 +214,7 @@ In particular, as this timestamp uses mircros(), so when doing some kinds of dee
 ### radio.sleepMCU(x)
 Put the MCU into sleep mode for x milliseconds. During this time micros
 and millis() may not advance, but radio.monotonicMillis() will correct for this
-and should behave as expected.
+and should behave as expected. Automatically calls addSleepTime.
 
+### radio.sleepPin(pin, mode)
+Sleep until a transition happens on the pin(mode can be RISING, LOW, etc).

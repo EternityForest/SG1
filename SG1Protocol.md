@@ -52,7 +52,7 @@ It is used so we don't have to try decrypting against every possible key.
 It can be one of:
 
 * The Fixed Hint Sequence(The hash of the channel key)
-* The Private Hint Sequence(Which changes every 16s)
+* The Private Hint Sequence(Which changes every 2**26 microseconds)
 * The Private Wake Sequence.
 
 Should it be the wake sequence, it means they are requesting all listening devices on the channel keep listening.
@@ -63,6 +63,12 @@ Reserved, must be all zeros.
 ### IV(Not present in Beacon messages)
 This is the device's Node ID, followed by 7 bytes of the current time, in 256us intervals since the UNIX epoch.
 
+
+### Calculating the private hint and wake sequences:
+
+One must first divide the system time by 2**26, then use that 8 byte signed number as the IV, with the channel key as the key, to encrypt 6 bytes of zeros.
+
+After masking off the top 4 high order bits in each, the first 3 are the private hint, the second 3 are the private wake sequence.
 
 
 
@@ -188,27 +194,39 @@ the 32 byte channel key, followed by the one byte RF profile, followed by the
 
 ## RF Profiles
 
+Power limit is 8dbm unless specified for narrowband profiles. 
+These profiles are meant to comply with FCC 15.247,
+which requires a -6db bandwidth of 500Khz to use higher transmission powers.
+
+They should also be usable under Europe's ETSI EN300.220, allowing
+863 to 868MHz operation, however they will not be usable for audio of video
+due to the ETSI 300KHz limit when used for that purpose.
+
+I am *not* a lawyer! Do your own research, these may not be usable everywhere.
+
 ### 1: GFSK600
 600 baud, 6.25KHz deviation, 25Khz channel spacing
+Power Limit: -4dbm
 
 ### 2: GFSK1200
-1200 baud, 10KHz deviation, 50Khz channel spacing
+1200 baud, 8KHz deviation, 25Khz channel spacing
+Power limit: -4db
 
 ### 3: GFSK4800
-4800 baud, 25KHz deviation, 100Khz channel spacing
-
+4800 baud, 177KHz deviation, 600Khz channel spacing
 
 ### 4: GFSK10K
-10kbaud, 25khz deviation, 100Khz spacing
+10kbaud, 177khz deviation, 600Khz spacing
 
-### 5: GFSK38k
-38400 baud, 80khz deviation, 250khz spacing
+### 5: GFSK38K
+38400 baud, 177khz deviation, 600khz spacing
 
 ### 6: GFSK100K:
-100kbaud, 100khz deviation, 250khz spacing
+100kbaud, 177khz deviation, 600khz spacing.
 
 ### 7: GFSK250K
-250Kbaud, 125khz deviation, 500khz spacing
+250Kbaud, 177khz deviation, 750khz spacing.
+Do not use on 433MHz.
 
 
 ## Channel Numbers
@@ -219,7 +237,9 @@ The frequency is then center of the Nth channel, modulo the number of channels s
 
 This always reserves some bandwidth at the bottom of the band for lower bandwidth applications.
 
-Channels above 1000 are actually hop patterns.
+
+
+Channels above 1000 are actually hop patterns. for FHSS.
 
 ## FHSS 
 
@@ -228,6 +248,13 @@ every 2**16 microseconds. An offset is used so that different hop patterns do no
 change over at the same time.
 
 Only the middle half of any hop slot should be used, for maximum tolerance of misalignment.
+
+
+## Channel Defaults:
+
+### Channel 3
+This should be used for any kind of very low data rate and semi public info,
+like time sync services, initial setup, etc. Avoid  using for other things.
 
 
 ## Gateway protocol
@@ -243,3 +270,7 @@ The first byte of any payload is always the command byte.
 This protocol has been designed for extremely low resource usage over
 very short serial links with almost nonexistant error rates.
 
+## Other Special Packets
+The first byte of a special packet always indicates the subtype.
+
+0, or empty packets are nulls that are only used as keepalives and time syncs.

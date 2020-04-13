@@ -36,7 +36,7 @@ RFM69::RFM69(uint8_t slaveSelectPin, uint8_t interruptPin, bool isRFM69HW)
   _interruptPin = interruptPin;
   _mode = RF69_MODE_STANDBY;
   _spyMode = false;
-  _powerLevel = 31;
+  _powerLevel = -4;
   _isRFM69HW = isRFM69HW;
 }
 
@@ -232,7 +232,7 @@ void RFM69::setPowerLevel(int8_t powerLevel)
   }
   else
   {
-    rawSetPowerLevel(12);
+    rawSetPowerLevel(-4);
   }
   
 }

@@ -153,7 +153,7 @@
 #endif
 
 #define RF69_MAX_DATA_LEN       66 // to take advantage of the built in AES/CRC we want to limit the frame size to the internal FIFO size (66 bytes - 3 bytes overhead - 2 bytes crc)
-#define CSMA_LIMIT              -90 // upper RX signal sensitivity threshold in dBm for carrier sense access
+#define CSMA_LIMIT              -95 // upper RX signal sensitivity threshold in dBm for carrier sense access
 #define RF69_MODE_SLEEP         0 // XTAL OFF
 #define RF69_MODE_STANDBY       1 // XTAL ON
 #define RF69_MODE_SYNTH         2 // PLL ON
@@ -168,7 +168,6 @@
 
 #define null                  0
 #define COURSE_TEMP_COEF    -90 // puts the temperature reading in the ballpark, user can fine tune the returned value
-#define RF69_BROADCAST_ADDR   0
 #define RF69_CSMA_LIMIT_MS 1000
 #define RF69_TX_LIMIT_MS   1000
 #define RF69_FSTEP  61.03515625 // == FXOSC / 2^19 = 32MHz / 2^19 (p13 in datasheet)
@@ -211,6 +210,8 @@ class SG1Channel
     uint32_t privateHintSequence;
 
     uint32_t fixedHintSequence;
+
+    void sleepPin(int pin, int mode);
 
 
 
@@ -376,6 +377,7 @@ class RFM69 {
     void readAllRegs();
     void readAllRegsCompact();
     bool isRecieving();
+    void sleepPin(int pin,int mode);
 
     int64_t rxTime=0;
 
@@ -385,6 +387,8 @@ class RFM69 {
 
     //This is the last full packet or beacon in 
     unsigned long lastSG1Presence=0;
+
+    int8_t maxTxPower = -4;
 
 
     //This is the last SG1 packet that we were able to validate
@@ -473,6 +477,7 @@ class RFM69 {
 
 };
 
+#define RF_PROFILE_CUSTOM 0
 #define RF_PROFILE_GFSK600 1
 #define RF_PROFILE_GFSK1200 2
 #define RF_PROFILE_GFSK4800 3
@@ -487,9 +492,9 @@ void urandom(uint8_t * target, uint8_t len);
 
 #endif
 
-#define debug(x) Serial.println((x));Serial.flush()
+//#define debug(x) Serial.println((x));Serial.flush()
 //#define REGISTER_DETAIL
-//#define debug(x)
+#define debug(x)
 
 
 //WakeRequests keep track of channels that we want to send wake requests

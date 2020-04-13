@@ -114,6 +114,13 @@ static uint32_t lastAccurateTimeSet = 0;
 static uint32_t lastTimeSync = 7998795;
 static unsigned long arduinoMillisOffset = 0;
 
+//Binary ppm, parts per 2**20
+static int32_t systemTimebPPMAdjust=0;
+
+//The reference point for when we started measuring the
+//time error
+static unsigned long systemTimeCorrectionBaseline=0;
+
 static union {
   //UNIX time in microseconds
   int64_t systemTime = -1;
@@ -130,6 +137,9 @@ void RFM69::addSleepTime(uint32_t m)
   noInterrupts();
   arduinoMillisOffset += m;
   systemTime += (m * 1000LL);
+  //Can't measure time accross sleep modes.
+  //Clock isn't accurate
+  systemTimeCorrectionBaseline=0;
   interrupts();
 }
 
@@ -202,13 +212,16 @@ void RFM69::syncFHSS(uint16_t attempts)
 static unsigned long systemTimeMicros = 0;
 
 
-void doTimestamp(uint32_t adjustment=0)
+void doTimestamp(int32_t adjustment=0)
 {
   //Set systemTime to the correct value by adding the micros.
   //Adjustment adds up to that many micros but will never make the clock go
   //backwards.
   unsigned long x = micros();
   unsigned long x2 = x - systemTimeMicros;
+  //Add a correction factor
+  x2 += (x2>>20)*systemTimebPPMAdjust;
+
   int64_t y = x2 + adjustment;
 
   //Clock doesn't go backwards except when actually set.
@@ -244,6 +257,10 @@ void doTimestamp(uint32_t adjustment=0)
   
 }
 
+void RFM69::sleepPin(int pin,int mode)
+{
+  sleepLib.sleepPinInterrupt(pin, mode);
+}
 int64_t RFM69::unixMicros(uint32_t adj)
 {
   doTimestamp(adj);
@@ -381,9 +398,9 @@ int8_t RFM69::getAutoTxPower()
     return _powerLevel;
   }
 
-  //If we have a message in the last 3 minutes, that means that we can
+  //If we have a message in the last 80s, that means that we can
   //use TX power control
-  if (lastSG1Presence > (monotonicMillis() - (3L * 60L * 1000L)))
+  if ((monotonicMillis()-lastSG1Presence) < ( - (80L * 1000L)))
   {
     //Target an RSSI on the other end of -90
     txPower = targetRSSI;
@@ -396,33 +413,28 @@ int8_t RFM69::getAutoTxPower()
     {
       txPower++;
     }
-    //When we've gone as high as we can go, then we turn on the FEC for an extra boost
-    //Pretty sure -4db is legal in most countries, so let's maybe not go above that without
-    //manual control.
-
-    //Technically we are targeting 1.25dbm, but there's antenna gain worry about here.
-    if(channelNumber<1001)
+ 
+    if (txPower > maxTxPower)
     {
-      if (txPower > -4)
-      {
-        txPower = -4;
-      }
+      txPower = maxTxPower;
     }
-    //FHSS can use higher power
-    else
-    {
-      if (txPower > -12)
-      {
-        txPower = -4;
-      }
-    }
-    
-
 
   }
   else
   {
-    txPower = 12;
+    //It appears excessively strong signals can actually block things at
+    //close range.
+    //Half the time, we use low power so as be able to connect close together
+    //devices. Once connected auto power takes over.
+    if(xorshift32()&1)
+    {
+    txPower = maxTxPower;
+    }
+    else
+    {
+      txPower=-4;
+    }
+    
   }
   return (uint8_t)txPower;
 }
@@ -657,12 +669,12 @@ void SG1Channel::recalcBeaconBytes()
 
   union {
     //Add 8 seconds to push us into the next period,
-    uint64_t currentIntervalNumber = (systemTime) / 16777216LL;
+    uint64_t currentIntervalNumber = (systemTime)>>26;
     uint8_t currentIV[8];
   };
 
   union {
-    uint64_t altIntervalNumber = (systemTime + 8000000L) / 16777216LL;
+    uint64_t altIntervalNumber = (systemTime + 8000000L)>>26;
     uint8_t altIV[8];
   };
 
@@ -671,7 +683,7 @@ void SG1Channel::recalcBeaconBytes()
   //
   if (currentIntervalNumber == altIntervalNumber)
   {
-    altIntervalNumber = (systemTime - 8000000L) / 16777216LL;
+    altIntervalNumber = (systemTime - 8000000L)>> 26;
   }
 
   uint8_t input[8] = {0, 0, 0, 0};
@@ -761,8 +773,7 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
    && (rxTimeTrust >= TIMETRUST_SECURE) && (abs(diff) < 2000000LL) )
   {
     debug("adj");
-    //0.75*diff
-    doTimestamp((diff /2) +(diff/4));
+    doTimestamp((diff>>1)+(diff>>2) );
     lastTimeSync=monotonicMillis();
     //Stop the FHSS search when we are actually connected.
   }
@@ -1150,7 +1161,7 @@ bool RFM69::decodeSG1(uint8_t *key)
     {
       rxPathLoss = txRSSI - _rssi;
 
-      lastSG1Presence = systemTime;
+      lastSG1Presence = monotonicMillis();
       debug("chb");
 
       //The wake request flag is used to let them wake us up
@@ -1433,11 +1444,22 @@ void RFM69::sendBeacon(bool wakeUp)
   {
     power++;
   }
+  //rawSetPowerLevel is going to limit the power to the actual range
+  //Of the module, power could be anything, even impossible values
   rawSetPowerLevel(power);
 
   uint8_t header[3] = {9, 0, 0};
-  header[2] = (((power - (-24)) / 4) & 0b1111);
-
+  //The max is there so that power levels below -24 don't actually get encoded
+  if(!_isRFM69HW)
+  {
+    header[2] = (((max(power,-18) +24) / 4) & 0b1111);
+  }
+  else
+  {
+    //HW modules can't go as low
+    header[2] = (((max(power,-2) +24) / 4) & 0b1111);
+  }
+  
   header[1] |= _headerTimeTrust();
 
   if (power > 3)
@@ -1546,6 +1568,7 @@ bool RFM69::checkBeaconSleep()
     //Use the real low power sleep mode.
     sleepLib.adcMode();
     sleepLib.sleepDelay(15);
+    systemTimeCorrectionBaseline=0;
     if (receiveDone())
     {
       //Them sending us valid traffic is just as good as a wake
@@ -1603,48 +1626,62 @@ void RFM69::setProfile(uint8_t profile)
     setDeviation(6000);
     setChannelFilter(12500);
     setChannelSpacing(25000);
+    maxTxPower=-4;
+    if(channelNumber>1000)
+    {
+      maxTxPower=8;
+    }
     break;
 
   case RF_PROFILE_GFSK1200:
     setBitrate(1200);
-    setDeviation(10000);
+    setDeviation(8000);
     setChannelFilter(25000);
-    setChannelSpacing(50000);
+    setChannelSpacing(2500);
+    maxTxPower=-4;
+    if(channelNumber>1000)
+    {
+      maxTxPower=8;
+    }
     break;
 
   case RF_PROFILE_GFSK4800:
     setBitrate(4800);
-    setDeviation(25000);
-    setChannelFilter(55000);
-    setChannelSpacing(100000);
+    setDeviation(177000);
+    setChannelFilter(540000);
+    setChannelSpacing(640000);
     break;
 
   case RF_PROFILE_GFSK10K:
     setBitrate(10000);
-    setDeviation(25000);
-    setChannelFilter(55000);
-    setChannelSpacing(100000);
+    setDeviation(177000);
+    setChannelFilter(540000);
+    setChannelSpacing(750000);
+    maxTxPower =8;
     break;
 
   case RF_PROFILE_GFSK38K:
     setBitrate(38400);
-    setDeviation(80000);
-    setChannelFilter(200000);
-    setChannelSpacing(250000);
+    setDeviation(177000);
+    setChannelFilter(540000);
+    setChannelSpacing(750000);
+    maxTxPower=8;
     break;
 
   case RF_PROFILE_GFSK100K:
     setBitrate(100000);
-    setDeviation(100000);
-    setChannelFilter(200000);
-    setChannelSpacing(250000);
+    setDeviation(177000);
+    setChannelFilter(540000);
+    setChannelSpacing(750000);
+    maxTxPower=8;
     break;
 
   case RF_PROFILE_GFSK250K:
     setBitrate(250000);
-    setDeviation(125000);
-    setChannelFilter(500000);
-    setChannelSpacing(500000);
+    setDeviation(177000);
+    setChannelFilter(650000);
+    setChannelSpacing(750000);
+    maxTxPower= 8;
     break;
 
   default:
@@ -1692,47 +1729,52 @@ void RFM69::setDeviation(uint32_t hz)
 void RFM69::setChannelFilter(uint32_t hz)
 {
 
-  if (hz <= 12500)
+  if (hz <= 12500L)
   {
     //12.5khz half spacing.
     //Only 10kkz guard band! I think this will still wodk though.
     writeReg(REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_20 | RF_RXBW_EXP_6);
   }
 
-  if (hz <= 25000)
+  if (hz <= 2500L)
   {
     //12.5khz half spacing.
     //Only 10kkz guard band! I think this will still wodk though.
     writeReg(REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_20 | RF_RXBW_EXP_5);
   }
 
-  else if (hz <= 50000)
+  else if (hz <= 50000L)
   {
     writeReg(REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_20 | RF_RXBW_EXP_4);
   }
-  else if (hz <= 62000)
+  else if (hz <= 62000L)
   {
     writeReg(REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_16 | RF_RXBW_EXP_4);
   }
-  else if (hz <= 100000)
+  else if (hz <= 100000L)
   {
     //100KHz
     writeReg(REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_20 | RF_RXBW_EXP_3);
   }
-  else if (hz <= 200000)
+  else if (hz <= 200000L)
   {
     //200KHz
     writeReg(REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_20 | RF_RXBW_EXP_2);
   }
-  else if (hz <= 330000)
+  else if (hz <= 330000L)
   {
     //332KHz
     writeReg(REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_24 | RF_RXBW_EXP_1);
   }
-  else
+  else if(hz<=500000L)
   {
     writeReg(REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_16 | RF_RXBW_EXP_1);
   }
+  else
+  {
+    writeReg(REG_RXBW, RF_RXBW_DCCFREQ_010 | RF_RXBW_MANT_24 | RF_RXBW_EXP_0);
+  }
+  
 }
 
 //Set the RF channel. If the channel is higher than the actual
@@ -1745,8 +1787,22 @@ void RFM69::setChannelNumber(uint16_t n)
   //Back to hz
   uint32_t spacing = channelSpacing*1000L;
 
-  channelNumber = n;
+  if(channelNumber==n)
+  {
+    if(n<=1000)
+    {
+      return;
+    }
+  }
+  else
+  {
+    //Need to recalc the power level limits
+    setProfile(rfProfile);
+  }
 
+    channelNumber = n;
+
+  
   if (channelNumber > 1000L)
   {
     uint32_t prng = n;
