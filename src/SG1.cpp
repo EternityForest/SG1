@@ -1729,8 +1729,11 @@ bool RFM69::checkBeaconSleep()
   long waitTime;
 
   //If our time is marked as accurate, or if we have gotten
-  //a packet in the last minute we can use short beacons
-  if ((systemTimeTrust & TIMETRUST_ACCURATE) || lastSG1Message > (monotonicMillis() - 60000L))
+  //a packet in the last 25 minutes we can use short beacons
+  //We need to stay in sync to within about 30s, and we're assuming the clock
+  //is around 1% accurate even though it's really like 
+
+  if ((systemTimeTrust & TIMETRUST_ACCURATE) || lastSG1Message > (monotonicMillis() - 1500000L))
   {
     sendBeacon();
     waitTime = (40000L + (bitTime + 500));

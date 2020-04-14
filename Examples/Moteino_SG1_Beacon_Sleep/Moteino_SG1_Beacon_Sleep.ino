@@ -52,7 +52,7 @@ void setup()
   radio.setPowerLevel(12);
 
   //Show state of module
-  radio.readAllRegs();
+  //radio.readAllRegs();
 
   //Every node on a channel needs a unique ID byte
   radio.setNodeID('A');
@@ -79,7 +79,6 @@ uint8_t attempts = 10;
 
 void loop()
 {
- radio.sendSG1Request("test",4);
   if((radio.monotonicMillis()-last)> 60000L || (last==0))
   {
     //Regular packet are needed for occasional clock sync
@@ -113,6 +112,7 @@ void loop()
   {
     Serial.println("No wakeup flag, radio sleeping 5s");
     Serial.println((int32_t)(radio.unixMicros()/1000000LL));
+    radio.sleep();
   }
 
   Serial.println("sleep");
