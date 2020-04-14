@@ -125,6 +125,10 @@ static union {
   //UNIX time in microseconds
   int64_t systemTime = -1;
   uint8_t systemTimeBytes[8];
+  //struct  __attribute__ ((packed)){
+  //  uint32_t systemTimeLow;
+  //  uint32_t systemTimeHigh;
+  //}
 };
 
 unsigned long RFM69::monotonicMillis()
@@ -219,7 +223,7 @@ void doTimestamp(int32_t adjustment = 0)
   unsigned long x = micros();
   unsigned long x2 = x - systemTimeMicros;
   //Add a correction factor
-  x2 += (x2 >> 20) * systemTimebPPMAdjust;
+  //x2 += (x2 >> 20) * systemTimebPPMAdjust;
 
   int64_t y = x2 + adjustment;
 
@@ -468,7 +472,7 @@ void RFM69::sendSG1RT(const void * buffer, const uint8_t bufferSize)
   noInterrupts();
 
   //Copy all 8 of the IV bytes, but we only send 4 
-  memcpy(smallBuffer+3,systemTimeBytes+4,8);
+  memcpy(smallBuffer+3,systemTimeBytes,8);
   interrupts();
 
   //Replace the LSB byte with the node ID.
@@ -669,6 +673,18 @@ retry:
 
   golay_block_encode(header, smallBuffer);
 
+  if(channelSpacing>200 && txPower<= -4 )
+  {
+  //Short range, does not need a long preamble
+  writeReg(REG_PREAMBLELSB, 0x02);
+  }
+  else
+  {
+   writeReg(REG_PREAMBLELSB, 0x04);
+  }
+  
+  
+
   unsigned long st = millis();
   //More than 3ms, and we do a full recalc.
   //This is neccesary to ensure that we always send precision time.
@@ -687,6 +703,8 @@ retry:
     }
     delayMicroseconds(xorshift32() & 0b1111111111L);
   }
+  //Back to the default
+  writeReg(REG_PREAMBLELSB, 0x04);
 
   //Time to try again, we weren't able to send
   goto retry;
@@ -775,11 +793,14 @@ int64_t RFM69::getPacketTimestamp()
   return rxTimestamp;
 }
 
+const int64_t maxDiffForSmallAdj = 2000000L;
+
 void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
 {
 
   int64_t rxTimestamp = 0;
   int64_t diff;
+  int64_t correct=((((RAWPAYLOADLEN + 1 + 4 +4 ) * 8LL) * bitTime) + 500LL);
 
   //Gonna subtract the data time, the preamble, and the sync bytes.
   //we want the start time.
@@ -787,8 +808,19 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
   rxTimestamp = getPacketTimestamp();
 
   //This basically find out how far ahead their clock is
-  diff = rxTimestamp - (rxTime - ((((RAWPAYLOADLEN + 1 + 4) * 8 + 40) * bitTime) + 400LL + 32LL + 8LL));
+  diff = rxTimestamp - rxTime;
 
+  //Add this extra correction to compensate for how far ahead the recieve time is
+  //from the packet start
+  //add 500us, assume 1ms poll interval or so.
+  diff+= correct;
+
+  bool canDoSmallAdjust = diff<maxDiffForSmallAdj;
+
+  if(diff< (-maxDiffForSmallAdj))
+  {
+    canDoSmallAdjust=false;
+  }
   //#TODO: This expects that the clock does not get set in between
   //recieve and decode.
 
@@ -804,10 +836,11 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
 
   //Packet is secure, and very close to our time, this lets us do small
   //adjustments without challenge response
-  if (((rxTimeTrust & TIMETRUST_ACCURATE) || ((systemTimeTrust & TIMETRUST_ACCURATE) == 0)) && (rxTimeTrust >= TIMETRUST_SECURE) && (abs(diff) < 2000000LL))
+  if (((rxTimeTrust & TIMETRUST_ACCURATE) || ((systemTimeTrust & TIMETRUST_ACCURATE) == 0)) && (rxTimeTrust >= TIMETRUST_SECURE) && canDoSmallAdjust)
   {
     debug("adj");
-    doTimestamp((diff >> 1) + (diff >> 2));
+    debug(canDoSmallAdjust);
+    doTimestamp(diff);
     lastTimeSync = monotonicMillis();
     //Stop the FHSS search when we are actually connected.
   }
@@ -819,7 +852,7 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
 
     //More than 2s, just jump.
     debug("tj");
-    systemTime += diff;
+    systemTime = systemTime+diff;
 
     //Yes, this can go backwards. It's somewhat of a nonce reuse hazard.
     //You got a better plan?
@@ -837,6 +870,16 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
     //for stuff that wants to know if we're there, like FHSS
     rawSendSG1(tmpBuffer, 0, true, getAutoTxPower(), 0, 0, HEADER_TYPE_SPECIAL);
   }
+  else
+  {
+    debug("nj");
+    debug(systemTimeTrust);
+    debug(rxTimeTrust);
+    debug((int32_t) (systemTime>>32));
+    debug((int32_t)(diff>>32));
+    debug((int32_t)(diff));
+  }
+  
 }
 
 bool RFM69::decodeSG1Header()
@@ -845,8 +888,6 @@ bool RFM69::decodeSG1Header()
   //Really 9 bytes, byt the len byte is implied
   if (DATALEN < 8)
   {
-    debug("tooshort");
-    debug(DATALEN);
     return false;
   }
 
@@ -858,7 +899,6 @@ bool RFM69::decodeSG1Header()
   if (golay_block_decode(tmpBuffer, rxHeader))
   {
     debug("badheader");
-    debug(tmpBuffer[0]);
     return false;
   }
   //We can't recover data that isn't actually there
@@ -1146,7 +1186,6 @@ bool RFM69::decodeSG1(uint8_t *key)
   if (tmpDatalen > 80)
   {
     debug("long");
-    debug(tmpDatalen);
     return false;
   }
 
@@ -1154,7 +1193,6 @@ bool RFM69::decodeSG1(uint8_t *key)
   if ((rxHeader[1] & HEADER_FEC_FIELD) == HEADER_FEC_GOLAY)
   {
     debug("fecr");
-    debug(tmpDatalen);
     //Full packet FEC mode. N
     for (uint8_t i = 0; i < (tmpDatalen - 5); i += 6)
     {
@@ -1163,8 +1201,6 @@ bool RFM69::decodeSG1(uint8_t *key)
       if (golay_block_decode(DATA + i + 5, tmpBuffer + (i / 2)))
       {
         debug("badfec");
-        debug(tmpDatalen);
-        debug(i);
         return false;
       }
     }
@@ -1290,7 +1326,7 @@ bool RFM69::decodeSG1(uint8_t *key)
             ((rxHeader[1] & HEADER_TYPE_FIELD) == HEADER_TYPE_RELIABLE_SPECIAL))
         {
 
-          if ((channelNumber > 1000) || (abs(diff) > (100000LL)))
+          if ((channelNumber > 1000L) || (abs(diff) > (100000LL)))
           {
             //Don't send replies if they actually requested one, leave that to
             //application code.
@@ -1494,6 +1530,7 @@ bool RFM69::decodeSG1RT()
     {
 
       debug("rtn");
+      debug((int32_t)((getPacketTimestamp()-systemTime)/1000000L));
       return false;
     }
 

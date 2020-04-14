@@ -133,7 +133,7 @@ void loop()
     }
 
     //Not an RT message, try decoding as a standard mesage.
-     if (radio.decodeSG1())
+     else if (radio.decodeSG1())
     {
       Serial.print("SG1 Decoded: [");
 

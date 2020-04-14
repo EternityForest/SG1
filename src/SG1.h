@@ -271,7 +271,7 @@ class RFM69 {
     uint32_t urandomRange(uint32_t, uint32_t);
     void urandom(uint8_t *, uint8_t);
 
-    static void setTime(int64_t time, uint8_t trust= TIMETRUST_SECURE|TIMETRUST_CHALLENGERESPONSE|TIMETRUST_CLAIM_TRUST|TIMETRUST_ACCURATE);
+    static void setTime(int64_t time, uint8_t trust= TIMETRUST_SECURE|TIMETRUST_CHALLENGERESPONSE|TIMETRUST_CLAIM_TRUST);
 
     uint8_t nodeID;
 
@@ -496,9 +496,9 @@ void urandom(uint8_t * target, uint8_t len);
 
 #endif
 
-#define debug(x) Serial.println((x));Serial.flush()
+//#define debug(x) Serial.println((x));Serial.flush()
 //#define REGISTER_DETAIL
-//#define debug(x)
+#define debug(x)
 
 
 //WakeRequests keep track of channels that we want to send wake requests

@@ -341,6 +341,8 @@ void RFM69::send(const void* buffer, uint8_t bufferSize)
 void RFM69::sendFrame(const void* buffer, uint8_t bufferSize)
 {
   setMode(RF69_MODE_STANDBY); // turn off receiver to prevent reception while filling fifo
+
+
   while ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00); // wait for ModeReady
   writeReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_00); // DIO0 is "Packet Sent"
   if (bufferSize > RF69_MAX_DATA_LEN){
