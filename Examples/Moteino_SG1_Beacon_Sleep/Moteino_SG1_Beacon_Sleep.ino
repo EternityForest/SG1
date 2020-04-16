@@ -90,12 +90,17 @@ void loop()
         if(radio.receiveDone())
         {
           Serial.println("Got raw data");
+          Serial.println(radio.DATALEN);
           //Getting a reply means we can skip this for 10 miniutes
+          unsigned long start = millis();
           if(radio.decodeSG1())
           {
+            Serial.println(millis()-start);
+            Serial.println("decoded");
             last=radio.monotonicMillis();
           }
         }
+        Serial.flush();
         radio.sleepMCU(15);
       }
       Serial.println("sync attaempt done");

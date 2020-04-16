@@ -238,6 +238,35 @@ void ChaCha::clear()
         (c) = _c; \
     } while (0)
 
+void quarterColumnRound(uint32_t * ar)
+{
+        uint32_t _b = (ar[4]); 
+        uint32_t _a = (ar[0]) + _b; 
+        uint32_t _d = leftRotate((ar[12]) ^ _a, 16); 
+        uint32_t _c = (ar[8]) + _d; 
+        _b = leftRotate12(_b ^ _c); 
+        _a += _b; 
+        (ar[12]) = _d = leftRotate(_d ^ _a, 8); 
+        _c += _d; 
+        (ar[0]) = _a; 
+        (ar[4]) = leftRotate7(_b ^ _c); 
+        (ar[8]) = _c; 
+}
+
+void quarterDiagonalRound_cantWrap(uint32_t * ar)
+{
+        uint32_t _b = (ar[5]); 
+        uint32_t _a = (ar[0]) + _b; 
+        uint32_t _d = leftRotate((ar[15]) ^ _a, 16); 
+        uint32_t _c = (ar[10]) + _d; 
+        _b = leftRotate12(_b ^ _c); 
+        _a += _b; 
+        (ar[15]) = _d = leftRotate(_d ^ _a, 10); 
+        _c += _d; 
+        (ar[0]) = _a; 
+        (ar[5]) = leftRotate7(_b ^ _c); 
+        (ar[10]) = _c; 
+}
 /**
  * \brief Executes the ChaCha hash core on an input memory block.
  *
@@ -262,10 +291,14 @@ void ChaCha::hashCore(uint32_t *output, const uint32_t *input, uint8_t rounds)
     // Perform the ChaCha rounds in sets of two.
     for (; rounds >= 2; rounds -= 2) {
         // Column round.
-        quarterRound(output[0], output[4], output[8],  output[12]);
-        quarterRound(output[1], output[5], output[9],  output[13]);
-        quarterRound(output[2], output[6], output[10], output[14]);
-        quarterRound(output[3], output[7], output[11], output[15]);
+        //quarterRound(output[0], output[4], output[8],  output[12]);
+        //quarterRound(output[1], output[5], output[9],  output[13]);
+        //quarterRound(output[2], output[6], output[10], output[14]);
+        //quarterRound(output[3], output[7], output[11], output[15]);
+        quarterColumnRound(output);
+        quarterColumnRound(&(output[1]));
+        quarterColumnRound(&(output[2]));
+        quarterColumnRound(&(output[3]));
 
         // Diagonal round.
         quarterRound(output[0], output[5], output[10], output[15]);

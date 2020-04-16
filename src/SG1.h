@@ -294,7 +294,7 @@ class RFM69 {
 
     void sendBeacon(bool wakeup=false);
 
-    void encrypt(const char * key);
+    void disableHWEncryption();
 
     RFM69(uint8_t slaveSelectPin=RF69_SPI_CS, uint8_t interruptPin=RF69_IRQ_PIN, bool isRFM69HW=false);
 
@@ -304,11 +304,11 @@ class RFM69 {
     void getEntropy(int changes=128);
     
     bool decodeSG1Header();
-    bool decodeSG1(uint8_t * key=0);
+    bool decodeSG1();
     int64_t getPacketTimestamp();
 
     uint32_t readHintSequence();
-    uint32_t xorshift32();
+    uint16_t xorshift16();
 
     int32_t getFEI();
 
@@ -346,19 +346,17 @@ class RFM69 {
 
 
     //Sends an SG1 protocol packet
-    virtual void sendSG1(const void* buffer, uint8_t bufferSize,uint8_t * challenge=0, uint8_t * key=0);
+    virtual void sendSG1(const void* buffer, uint8_t bufferSize);
     
     //Default is unreliable type
-    virtual void rawSendSG1(const void* buffer, uint8_t bufferSize, bool useFEC, int8_t txPower, uint8_t * useChallenge, uint8_t * key=0,
-    uint8_t packetType= 0b0010000);
+    virtual void rawSendSG1(const void* buffer, uint8_t bufferSize, uint8_t * useChallenge,
+    uint8_t packetType);
 
     virtual void sendSG1Reply(const void* buffer, uint8_t bufferSize);
     virtual void sendSG1Request(const void* buffer, uint8_t bufferSize);
 
     virtual bool receiveDone();
-    bool ACKReceived(uint16_t fromNodeID);
-    bool ACKRequested();
-    
+   
     uint32_t getFrequency();
     void setFrequency(uint32_t freqHz);
 
@@ -403,7 +401,7 @@ class RFM69 {
 
     int8_t getAutoTxPower();
     
-    void addEntropy(uint32_t x);
+    void addEntropy(uint8_t x);
 
     static unsigned long monotonicMillis();
     static void addSleepTime(unsigned long t);
@@ -434,6 +432,12 @@ class RFM69 {
     //Sets the remote's address to the current channel key.
     bool pairWithRemote(uint8_t nodeID);
     bool listenForPairing(uint8_t deviceClass[16]);
+
+    //Check against all the hint sequences we're looking for
+    bool checkHintSequenceRelevance(uint32_t);
+
+    //Reads a byte array into a 20 bit number
+    static uint32_t readHintSequence(uint8_t *);
 
     //Used internally by the system to track if ew got a special message
     bool gotSpecialPacket=0;

@@ -57,6 +57,11 @@ void RFM69::sleepMCU(unsigned long x)
 }
 #endif
 
+//Two tmp buffers sized to hold an entire packet, rounded up to 80
+//for overflow protection, and so we can use the very end for misc scratchpad stuff
+uint8_t tmpBuffer[80];
+uint8_t smallBuffer[80];
+
 void golay_block_encode(uint8_t *in, uint8_t *out);
 bool golay_block_decode(uint8_t *in, uint8_t *out);
 
@@ -149,19 +154,17 @@ void RFM69::addSleepTime(uint32_t m)
 
 static union {
   uint8_t entropyPool[20];
-  uint64_t entropyRegister;
-
   //BAD CRYPTO ALERT!!!
   //This is shared with a totally insecure RNG
   //This leaks small amounts of information about
   //these 32 bits. This should normally not matter,
   //As we re-encrypt the entire pool both before and after use
-  uint32_t entropyRegister32;
+  uint32_t entropyRegister;
 };
 
 //The non-secure RNG we use for packet timings
 //static uint32_t rngState;
-#define rngState entropyRegister32
+#define rngState entropyRegister
 
 void RFM69::initSystemTime()
 {
@@ -181,13 +184,13 @@ void RFM69::initSystemTime()
 
 void RFM69::syncFHSS(uint16_t attempts)
 {
-  fhssOffset = xorshift32();
+  fhssOffset = xorshift16();
   for (uint16_t i = 0; i < attempts; i++)
   {
     //Try a random FHSS channel and listen for replies,
     //but no matter what  always go back to the normal sequence at the end
     fhssOffset += 1;
-    rawSendSG1(0, 0, true, getAutoTxPower(), 0, 0, HEADER_TYPE_RELIABLE_SPECIAL);
+    rawSendSG1(0, 0, 0, HEADER_TYPE_RELIABLE_SPECIAL);
     for (int j = 0; j < 100L; j++)
     {
       delay(1);
@@ -284,7 +287,7 @@ static void mixEntropy()
   //We don't use the auth tag
 }
 
-uint32_t RFM69::xorshift32()
+uint16_t RFM69::xorshift16()
 {
   /* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */
   rngState += micros();
@@ -317,28 +320,33 @@ void RFM69::urandom(uint8_t *target, uint8_t len)
 
   //Take a reading to further do some mixing.
   entropyRegister += readTemperature();
-  entropyRegister ^= readRSSI();
 
   //Mix entropy before we actually use it, so that we don't
   //get any reuse with the non-secure uses of the pool.
   mixEntropy();
 
-  cipherContext.clear();
+  //cipherContext.clear();
 
   cipherContext.setKey(entropyPool, 20);
-  cipherContext.setIV(systemTimeBytes, 8);
-  //Copy bytes 20 at a time. Note that
+  //Use whatever nonsense is in the tmp buffer at the moment
+  cipherContext.setIV(entropyPool, 8);
+  //Copy bytes 16 at a time. Note that
   //We never reveal the raw content of the entropy pool for any reason.
-  //We just use the encrypted keystream XORed with the pool
+  //We just use the encrypted keystream XORed with the tmpBuffer
+  //Also, only 16 bytes so we can't possibly reveal the full state
+
+  //Also important is the fact that we do not use the same IV
+  //we use for the mixEntropy, as that would mean what we output
+  //is the same as the new state of the pool
   while (len)
   {
     int x = len;
-    if (x > 20)
+    if (x > 16)
     {
-      x = 20;
+      x = 16;
     }
 
-    cipherContext.encrypt(target, entropyPool, x);
+    cipherContext.encrypt(target, tmpBuffer, x);
     len -= x;
     target += x;
   }
@@ -347,9 +355,9 @@ void RFM69::urandom(uint8_t *target, uint8_t len)
   mixEntropy();
 }
 
-void RFM69::addEntropy(uint32_t x)
+void RFM69::addEntropy(uint8_t x)
 {
-  entropyRegister32 += x;
+  entropyRegister += x;
 }
 
 void RFM69::setTime(int64_t time, uint8_t trust)
@@ -373,10 +381,7 @@ void RFM69::setTime(int64_t time, uint8_t trust)
 
 volatile bool RFM69::_haveData;
 
-//Two tmp buffers sized to hold an entire packet, rounded up to 80
-//for overflow protection, and so we can use the very end for misc scratchpad stuff
-uint8_t tmpBuffer[80];
-uint8_t smallBuffer[80];
+
 
 int8_t RFM69::getAutoTxPower()
 {
@@ -427,7 +432,7 @@ int8_t RFM69::getAutoTxPower()
     //close range.
     //part of the time, we use low power so as be able to connect close together
     //devices. Once connected auto power takes over.
-    if ((xorshift32() & 0b11==00))
+    if ((xorshift16() & 0b11==00))
     {
       txPower = -8;
     }
@@ -439,26 +444,22 @@ int8_t RFM69::getAutoTxPower()
   return (uint8_t)txPower;
 }
 
-void RFM69::sendSG1(const void *buffer, uint8_t bufferSize, uint8_t *challenge, uint8_t *key)
+void RFM69::sendSG1(const void *buffer, uint8_t bufferSize)
 {
-  int8_t txPower = getAutoTxPower();
   //Reset the failed request tracking
   requestedReply = 0;
-
-  rawSendSG1(buffer, bufferSize, txPower > -5, txPower, challenge, key, HEADER_TYPE_UNRELIABLE);
+  rawSendSG1(buffer, bufferSize, 0, HEADER_TYPE_UNRELIABLE);
 }
 
 void RFM69::sendSG1Request(const void *buffer, uint8_t bufferSize)
 {
-  int8_t txPower = getAutoTxPower();
   requestedReply += 1;
-  rawSendSG1(buffer, bufferSize, txPower > -5, txPower, 0, 0, HEADER_TYPE_RELIABLE);
+  rawSendSG1(buffer, bufferSize, 0, HEADER_TYPE_RELIABLE);
 }
 
 void RFM69::sendSG1Reply(const void *buffer, uint8_t bufferSize)
 {
-  int8_t txPower = getAutoTxPower();
-  rawSendSG1(buffer, bufferSize, txPower > -5, txPower, rxIV, 0, HEADER_TYPE_REPLY);
+  rawSendSG1(buffer, bufferSize, rxIV, HEADER_TYPE_REPLY);
 }
 
 void RFM69::sendSG1RT(const void * buffer, const uint8_t bufferSize)
@@ -497,16 +498,15 @@ void RFM69::sendSG1RT(const void * buffer, const uint8_t bufferSize)
       debug("srt");
       break;
     }
-    delayMicroseconds(xorshift32()&4095L);
+    delayMicroseconds(xorshift16()&4095L);
     goto retry;
   }
   writeReg(REG_PREAMBLELSB, 0x04);
 }
 
-void RFM69::rawSendSG1(const void *buffer, uint8_t bufferSize, bool useFEC, int8_t txPower,
-                       uint8_t *useChallenge, uint8_t *key, uint8_t packetType)
+void RFM69::rawSendSG1(const void *buffer, uint8_t bufferSize,
+                       uint8_t *useChallenge, uint8_t packetType)
 {
-
   //The length of everything after the initial 6 byte block
   //8 byte IV, 8 byte MAC, 3 byte channel hint
   int payloadSize = bufferSize + 8 + 8 + 3;
@@ -527,6 +527,18 @@ void RFM69::rawSendSG1(const void *buffer, uint8_t bufferSize, bool useFEC, int8
 
   header[1] |= _headerTimeTrust();
 
+  int txPower=getAutoTxPower();
+  //Round up to 4
+  while (txPower % 4)
+  {
+    txPower++;
+  }
+  txPower=max(txPower,-24);
+  bool useFEC= false;
+  if (txPower>= maxTxPower)
+  {
+    useFEC=false;
+  }
   //If the whole message would be big we have to turn off FEC
   //To get the total under 64 bytes
   if (payloadSize > 29)
@@ -540,13 +552,7 @@ void RFM69::rawSendSG1(const void *buffer, uint8_t bufferSize, bool useFEC, int8
     return;
   }
 
-
-  //Round up to 4
-  while (txPower % 4)
-  {
-    txPower++;
-  }
-  txPower=max(txPower,-24);
+  
   header[2] = ((txPower - (-24)) / 4);
 
   rawSetPowerLevel(txPower);
@@ -584,15 +590,8 @@ void RFM69::rawSendSG1(const void *buffer, uint8_t bufferSize, bool useFEC, int8
   //Add the 6 bytes for the header itself.
   header[0] = payloadSize + 6;
 
-  cipherContext.clear();
-  if (key == 0)
-  {
-    cipherContext.setKey(defaultChannel.channelKey, 32);
-  }
-  else
-  {
-    cipherContext.setKey(key, 32);
-  }
+
+  cipherContext.setKey(defaultChannel.channelKey, 32);
 
 retry:
   doTimestamp();
@@ -701,7 +700,7 @@ retry:
       lastSentSG1 = monotonicMillis();
       return;
     }
-    delayMicroseconds(xorshift32() & 0b1111111111L);
+    delayMicroseconds(xorshift16() & 0b1111111111L);
   }
   //Back to the default
   writeReg(REG_PREAMBLELSB, 0x04);
@@ -711,6 +710,11 @@ retry:
 }
 
 uint8_t rxHeader[8];
+
+uint32_t applyHintSequenceMask(uint32_t x)
+{
+  return x&HINT_SEQUENCE_MASK;
+}
 
 void SG1Channel::recalcBeaconBytes()
 {
@@ -755,7 +759,7 @@ void SG1Channel::recalcBeaconBytes()
   altPrivateHintSequence = 0;
   altPrivateWakeSequence = 0;
 
-  cipherContext.clear();
+  //cipherContext.clear();
   cipherContext.setKey(channelKey, 32);
   cipherContext.setIV(altIV, 8);
 
@@ -767,7 +771,7 @@ void SG1Channel::recalcBeaconBytes()
   //Because that encrypt takes a millisecond.
   if (memcmp(currentIV, altIV, 8))
   {
-    cipherContext.clear();
+    //cipherContext.clear();
     cipherContext.setKey(channelKey, 32);
     cipherContext.setIV(currentIV, 8);
 
@@ -780,10 +784,10 @@ void SG1Channel::recalcBeaconBytes()
     memcpy((uint8_t *)&privateHintSequence, (uint8_t *)&altPrivateHintSequence, 3);
     memcpy((uint8_t *)&privateWakeSequence, (uint8_t *)&altPrivateWakeSequence, 3);
   }
-  privateHintSequence &= HINT_SEQUENCE_MASK;
-  privateWakeSequence &= HINT_SEQUENCE_MASK;
-  altPrivateHintSequence &= HINT_SEQUENCE_MASK;
-  altPrivateWakeSequence &= HINT_SEQUENCE_MASK;
+  privateHintSequence =applyHintSequenceMask(privateHintSequence);
+  privateWakeSequence =applyHintSequenceMask(privateWakeSequence);
+  altPrivateHintSequence =applyHintSequenceMask(altPrivateHintSequence);
+  altPrivateWakeSequence=applyHintSequenceMask(altPrivateWakeSequence);
 }
 
 int64_t RFM69::getPacketTimestamp()
@@ -793,13 +797,15 @@ int64_t RFM69::getPacketTimestamp()
   return rxTimestamp;
 }
 
-const int64_t maxDiffForSmallAdj = 2000000L;
+const int64_t maxDiffForSmallAdj = 2000000LL;
 
 void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
 {
 
   int64_t rxTimestamp = 0;
+ 
   int64_t diff;
+  
   int64_t correct=((((RAWPAYLOADLEN + 1 + 4 +4 ) * 8LL) * bitTime) + 500LL);
 
   //Gonna subtract the data time, the preamble, and the sync bytes.
@@ -815,12 +821,19 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
   //add 500us, assume 1ms poll interval or so.
   diff+= correct;
 
-  bool canDoSmallAdjust = diff<maxDiffForSmallAdj;
+  bool canDoSmallAdjust = true;
 
-  if(diff< (-maxDiffForSmallAdj))
+  //Check if the absolute value is less than 2000000L
+  //I could not get this comparision to work any other way.
+  //Note we have to mask off the sign bit to get the abs
+  //I have no clue what the bug was.
+  if( (((((uint32_t *)&diff)[1])&0b01111111111111111111111111111111)>0) || ((((uint32_t *)&diff)[0])>2000000UL))
   {
+    debug("B");
+    debug((int32_t)(diff>>16));
     canDoSmallAdjust=false;
   }
+
   //#TODO: This expects that the clock does not get set in between
   //recieve and decode.
 
@@ -852,6 +865,8 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
 
     //More than 2s, just jump.
     debug("tj");
+    debug(canDoSmallAdjust);
+    debug((int32_t) diff);
     systemTime = systemTime+diff;
 
     //Yes, this can go backwards. It's somewhat of a nonce reuse hazard.
@@ -868,7 +883,7 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
     //Having them set our timestamp is pretty much the closest thing
     //We have to a "connection", so we send this as kind of an acknowledge
     //for stuff that wants to know if we're there, like FHSS
-    rawSendSG1(tmpBuffer, 0, true, getAutoTxPower(), 0, 0, HEADER_TYPE_SPECIAL);
+    rawSendSG1(tmpBuffer, 0, 0, HEADER_TYPE_SPECIAL);
   }
   else
   {
@@ -888,6 +903,7 @@ bool RFM69::decodeSG1Header()
   //Really 9 bytes, byt the len byte is implied
   if (DATALEN < 8)
   {
+    debug("tsht");
     return false;
   }
 
@@ -993,7 +1009,7 @@ bool RFM69::listenForPairing(uint8_t deviceClass[16])
             Curve25519::dh1(buf + 1, secret, buf + 33);
             memcpy(buf + 33, deviceClass, 16);
             buf[0] = SPECIAL_TYPE_PAIRING_CHALLENGE;
-            rawSendSG1(buf, 48, true, 3, 0, 0, HEADER_TYPE_SPECIAL);
+            rawSendSG1(buf, 48, 0, HEADER_TYPE_SPECIAL);
           }
         }
         else if (state == 1)
@@ -1058,6 +1074,18 @@ bool RFM69::listenForPairing(uint8_t deviceClass[16])
   setPowerLevel(oldPowerLevel);
 }
 
+bool RFM69::checkHintSequenceRelevance(const uint32_t hint)
+{
+  if((hint==defaultChannel.fixedHintSequence)||
+  (hint == defaultChannel.privateHintSequence) ||
+  (hint == defaultChannel.privateWakeSequence) ||
+  (hint == defaultChannel.altPrivateHintSequence) ||
+  (hint == defaultChannel.altPrivateWakeSequence))
+  {
+    return true;
+  }
+  return false;
+}
 bool RFM69::pairWithRemote(uint8_t nodeID)
 {
   uint8_t oldKey[32];
@@ -1083,7 +1111,7 @@ bool RFM69::pairWithRemote(uint8_t nodeID)
   unsigned char state = 0;
 
   buf[0] = SPECIAL_TYPE_PAIRING_REQUEST;
-  rawSendSG1(buf, 48, true, 3, 0, 0, HEADER_TYPE_SPECIAL);
+  rawSendSG1(buf, 48, 0, HEADER_TYPE_SPECIAL);
 
   while ((millis() - now) < 15000)
   {
@@ -1118,7 +1146,7 @@ bool RFM69::pairWithRemote(uint8_t nodeID)
           //need to send them the key
           memcpy(buf + 1, smallBuffer, 32);
 
-          rawSendSG1(buf, 1 + 32, true, -4, 0, 0, HEADER_TYPE_SPECIAL);
+          rawSendSG1(buf, 1 + 32, 0, HEADER_TYPE_SPECIAL);
           delay(1500);
 
           //Now we just need to send the actual connection parameters.
@@ -1140,7 +1168,7 @@ bool RFM69::pairWithRemote(uint8_t nodeID)
           //Note that this is going to encrypt everything again.
           //We just accept the slight bit of extra waste, to be able to
           //Have all th packets use the same format.
-          rawSendSG1(buf, 1 + 32 + 1 + 2 + 8, true, 3, 0, 0, HEADER_TYPE_SPECIAL);
+          rawSendSG1(buf, 1 + 32 + 1 + 2 + 8, 0, HEADER_TYPE_SPECIAL);
         }
       }
     }
@@ -1159,7 +1187,7 @@ Our channel.
 
 If True, DATA and DATALEN will be the decoded and decrypted payload.
 */
-bool RFM69::decodeSG1(uint8_t *key)
+bool RFM69::decodeSG1()
 {
   int8_t _rssi = RSSI;
   gotSpecialPacket = false;
@@ -1167,6 +1195,7 @@ bool RFM69::decodeSG1(uint8_t *key)
 
   if (decodeSG1Header() == false)
   {
+
     return false;
   }
 
@@ -1216,8 +1245,7 @@ bool RFM69::decodeSG1(uint8_t *key)
     memcpy(tmpBuffer, DATA + 5, tmpDatalen);
   }
 
-  uint32_t rxHintSequence = ((uint32_t *)(tmpBuffer))[0];
-  rxHintSequence = rxHintSequence & HINT_SEQUENCE_MASK;
+  uint32_t rxHintSequence = readHintSequence(tmpBuffer);
 
   //3 data bytes indicate a short packet, only using
   //the brief channel hints
@@ -1279,11 +1307,7 @@ bool RFM69::decodeSG1(uint8_t *key)
     rxTimeTrust += TIMETRUST_CLAIM_TRUST;
   }
 
-  if ((rxHintSequence == defaultChannel.fixedHintSequence) |
-      (rxHintSequence == defaultChannel.privateHintSequence) |
-      (rxHintSequence == defaultChannel.privateWakeSequence) |
-      (rxHintSequence == defaultChannel.altPrivateHintSequence) |
-      (rxHintSequence == defaultChannel.altPrivateWakeSequence))
+  if (checkHintSequenceRelevance(rxHintSequence))
   {
     //NodeID+timestamp is after hint
     memcpy(rxIV, tmpBuffer + 3, 8);
@@ -1315,7 +1339,7 @@ bool RFM69::decodeSG1(uint8_t *key)
       {
         int64_t diff = getPacketTimestamp() - (rxTime - ((((RAWPAYLOADLEN + 1 + 4) * 8 + 40) * bitTime) + 400LL + 32LL + 8LL));
         //We are going to try to maintain tight timing
-        //100ms is the limit before we tell them. We need the tight sync
+        //1100ms is the limit before we tell them. We need the tight sync
         //for FHSS, so use 5ms when that is enabled.
         //Can't reply to a reply
 
@@ -1325,8 +1349,15 @@ bool RFM69::decodeSG1(uint8_t *key)
         if (((abs(diff) > (5000LL)) && (!isReply())) ||
             ((rxHeader[1] & HEADER_TYPE_FIELD) == HEADER_TYPE_RELIABLE_SPECIAL))
         {
+          
+          //normally, the limit is 1.1 seconds, on accound of the
+          //1 second precision limit of a real time clock.
+          //We occasionally randomly send packets anyway to allow high precision sync
+          //without wasting too much 
 
-          if ((channelNumber > 1000L) || (abs(diff) > (100000LL)))
+          //We also *always* reply to reliable special packets.
+          if ((channelNumber > 1000L) || ((abs(diff) > (1100000LL) || (systemTimeBytes[0]<32))) ||
+          (rxHeader[1] & HEADER_TYPE_FIELD) == HEADER_TYPE_RELIABLE_SPECIAL)
           {
             //Don't send replies if they actually requested one, leave that to
             //application code.
@@ -1341,8 +1372,7 @@ bool RFM69::decodeSG1(uint8_t *key)
               //Says what we are watching for, if we were watching for something
               debug("ofset");
               debug((int32_t)(diff));
-              int8_t autoPwr = getAutoTxPower();
-              rawSendSG1(smallBuffer, 0, autoPwr >= -4, autoPwr, rxIV, 0, HEADER_TYPE_REPLY_SPECIAL);
+              rawSendSG1(smallBuffer, 0, rxIV, HEADER_TYPE_REPLY_SPECIAL);
             }
           }
         }
@@ -1377,7 +1407,7 @@ bool RFM69::decodeSG1(uint8_t *key)
       }
     }
 
-    cipherContext.clear();
+    //cipherContext.clear();
     cipherContext.setKey(defaultChannel.channelKey, 32);
     cipherContext.setIV(rxIV, 8);
 
@@ -1470,6 +1500,13 @@ bool RFM69::decodeSG1(uint8_t *key)
   }
 }
 
+
+uint32_t RFM69::readHintSequence(uint8_t * x)
+{
+  uint32_t rxHintSequence = ((uint32_t *)(x))[0];
+  rxHintSequence = rxHintSequence & HINT_SEQUENCE_MASK;
+  return rxHintSequence;
+}
 /*
   Attempt to decode the packet as an SG1RT message.
   These use 9 bytes less data and are much simpler
@@ -1495,12 +1532,9 @@ bool RFM69::decodeSG1RT()
     return false;
   }
 
-  uint32_t rxHintSequence = ((uint32_t *)(DATA))[0];
-  rxHintSequence = rxHintSequence & HINT_SEQUENCE_MASK;
+  uint32_t rxHintSequence = readHintSequence(DATA);
 
-  if ((rxHintSequence == defaultChannel.fixedHintSequence) ||
-      (rxHintSequence == defaultChannel.privateHintSequence) ||
-      (rxHintSequence == defaultChannel.altPrivateHintSequence))
+  if (checkHintSequenceRelevance(rxHintSequence))
   {
     debug("oh");
   }
@@ -1546,7 +1580,7 @@ bool RFM69::decodeSG1RT()
     }
   }
 
-  cipherContext.clear();
+  //cipherContext.clear();
   cipherContext.setKey(defaultChannel.channelKey, 32);
   cipherContext.setIV(rxIV, 8);
 
@@ -1685,7 +1719,7 @@ void RFM69::sendBeacon(bool wakeUp)
     if (wakeUp == false)
     {
       //8ms seems like a reasonable length to use for CSMA.
-      delayMicroseconds(xorshift32() & 8192L);
+      delayMicroseconds(xorshift16() & 8192L);
     }
     _receiveDone();
   }
@@ -1741,7 +1775,7 @@ bool RFM69::checkBeaconSleep()
   else
   {
     //Otherwise we have to send a whole packet
-    rawSendSG1(0, 0, getAutoTxPower(), getAutoTxPower() > -8, 0, 0, HEADER_TYPE_RELIABLE_SPECIAL);
+    rawSendSG1(0, 0, 0, HEADER_TYPE_RELIABLE_SPECIAL);
     waitTime = (40000L + (bitTime + 1200));
   }
 
@@ -1795,7 +1829,7 @@ void SG1Channel::setChannelKey(unsigned char *key)
   //Ensure byte 3 is set to zero, it's a padding byte
   fixedHintSequence = 0;
 
-  cipherContext.clear();
+  //cipherContext.clear();
   cipherContext.setKey(channelKey, 32);
   cipherContext.setIV(IV, 8);
   cipherContext.encrypt((uint8_t *)(&fixedHintSequence), input, 3);

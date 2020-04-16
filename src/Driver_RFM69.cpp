@@ -113,26 +113,38 @@ bool RFM69::initialize(uint8_t freqBand)
   start = millis();
   do writeReg(REG_SYNCVALUE1, 0x55); while (readReg(REG_SYNCVALUE1) != 0x55 && millis()-start < timeout);
 
-  for (uint8_t i = 0; CONFIG[i][0] != 255; i++)
-    writeReg(CONFIG[i][0], CONFIG[i][1]);
-
+  for (uint8_t i = 0; i< 255; i++)
+  {
+    uint8_t regAddr =CONFIG[i][0];
+    uint8_t regVal =  CONFIG[i][1];
+    if(regAddr==255)
+    {
+      break;
+    }
+    writeReg(regAddr,regVal);
+  }
   // Encryption is persistent between resets and can trip you up during debugging.
   // Disable it during initialization so we always start from a known state.
-  encrypt(0);
+  disableHWEncryption();
 
   setHighPower(_isRFM69HW); // called regardless if it's a RFM69W or RFM69HW
   setMode(RF69_MODE_STANDBY);
   start = millis();
   while (((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00) && millis()-start < timeout); // wait for ModeReady
   if (millis()-start >= timeout)
+    {
+      debug("failed");
     return false;
+    }
   attachInterrupt(_interruptNum, RFM69::isr0, RISING);
 
   
   
   //Speed up entropy with RX mode to use RSSI
   setMode(RF69_MODE_RX);
+  debug(1);
   getEntropy();
+  debug(2);
   setMode(RF69_MODE_STANDBY);
   setProfile(RF_PROFILE_GFSK250K);
   initSystemTime();
@@ -326,7 +338,7 @@ void RFM69::send(const void* buffer, uint8_t bufferSize)
       return;
     }
     //8ms seems like a reasonable length to use for CSMA.
-    delayMicroseconds(xorshift32()%8192);
+    delayMicroseconds(xorshift16()%8192);
     //Underscore doesn't mark things as handled, we can still return
     //the packet to the user when they call the non-underscore version.
     _receiveDone();
@@ -487,9 +499,6 @@ void RFM69::interruptHandler() {
     DATA[DATALEN] = 0; // add null at end of string // add null at end of string  
   }
   RSSI = readRSSI();
-  
-  //Both the packet time and the RSSI are unpredictable.
-  addEntropy(RSSI);
   addEntropy(micros());
 }
 
@@ -613,21 +622,7 @@ void RFM69::rcCalibration()
   while ((readReg(REG_OSC1) & RF_OSC1_RCCAL_DONE) == 0x00);
 }
 
-void RFM69::encrypt(const char* key) {
-#if defined(RF69_LISTENMODE_ENABLE)
-  _haveEncryptKey = key;
-#endif
+void RFM69::disableHWEncryption() {
   setMode(RF69_MODE_STANDBY);
-  if (key != 0)
-  {
-#if defined(RF69_LISTENMODE_ENABLE)
-    memcpy(_encryptKey, key, 16);
-#endif
-    select();
-    SPI.transfer(REG_AESKEY1 | 0x80);
-    for (uint8_t i = 0; i < 16; i++)
-      SPI.transfer(key[i]);
-    unselect();
-  }
-  writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFE) | (key ? 1 : 0));
+  writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFE) | 0);
 }
