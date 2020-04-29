@@ -281,7 +281,7 @@ The first byte of a special packet always indicates the subtype.
 RT packets are used for transferring data quickly with far less overhead.
 
 They have an entirely different structure and much weaker message authentication,
-which is even more unsuitable for anything requiring security.
+which is even more unsuitable for anything requiring security.  Expect 1 or 2 invalid packets per year to slip in on a busy channel, although the actual number will more likely be 0.
 
 They also lack the data needed to perform time sync and automatic TX power, so must
 be used along with periodic beacons or full data packets.

@@ -248,7 +248,7 @@ class RFM69 {
 
 
     uint16_t bitTime=10;
-    uint16_t eepromAddr=48;
+    uint16_t eepromAddr=64;
 
     void useEEPROM(uint16_t addr);
 
@@ -271,7 +271,7 @@ class RFM69 {
     uint32_t urandomRange(uint32_t, uint32_t);
     void urandom(uint8_t *, uint8_t);
 
-    static void setTime(int64_t time, uint8_t trust= TIMETRUST_SECURE|TIMETRUST_CHALLENGERESPONSE|TIMETRUST_CLAIM_TRUST);
+    void setTime(int64_t time, uint8_t trust= TIMETRUST_SECURE|TIMETRUST_CHALLENGERESPONSE|TIMETRUST_CLAIM_TRUST);
 
     uint8_t nodeID;
 

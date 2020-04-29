@@ -71,6 +71,9 @@ bool golay_block_decode(uint8_t *in, uint8_t *out);
 //EAX<SpeckTiny> cipherContext;
 ChaChaPoly cipherContext;
 
+
+#define EEPROM_ENTROPY_OFFSET (32 + 1 + 2 + 1)
+
 #define HINT_SEQUENCE_MASK 0b11111111111111111111UL
 
 //Flags for byte 1 of the header.
@@ -170,10 +173,9 @@ void RFM69::initSystemTime()
 {
   //Better to have a random time, so the encryption using it still works.
   //Assume very small timestamps are just unset
-  if (systemTime > -2 && systemTime < 5000000L)
+  if ((systemTime > -2) && (systemTime < 5000000L))
   {
     urandom(systemTimeBytes, 8);
-
     //Make it obviously fake by being negative.
     if (systemTime > 0LL)
     {
@@ -319,6 +321,9 @@ void RFM69::urandom(uint8_t *target, uint8_t len)
   //the destination.
 
   //Take a reading to further do some mixing.
+
+  //The pool must be seeded for this to work!!!
+  //This means that you need to 
   entropyRegister += readTemperature();
 
   //Mix entropy before we actually use it, so that we don't
@@ -363,12 +368,20 @@ void RFM69::addEntropy(uint8_t x)
 void RFM69::setTime(int64_t time, uint8_t trust)
 {
   noInterrupts();
-  //Special value 0 indicates we keep the current time and only set the trust
-  //flags
+  //Special value 0 indicates we randomize the time if needed.
   if (time)
   {
     systemTime = time;
     systemTimeMicros = micros();
+    //The seconds count of an actual realtime source are going to
+    //pretty much be a counter. When combined with a secret key,
+    //It should be a good enough source of randomness even if the 
+    //HW entropy gathering isn't good.
+    entropyRegister+= time>>20;
+  }
+  else
+  {
+    initSystemTime();
   }
   systemTimeTrust = trust;
 
@@ -485,7 +498,7 @@ void RFM69::sendSG1RT(const void * buffer, const uint8_t bufferSize)
   //Now we encrypt. Note that we overwrite the top 4 IV bytes,
   //We don't want to send those, the reciever uses the ones from the system clock.
   cipherContext.encrypt(smallBuffer+3+4, (uint8_t *)buffer,bufferSize);
-  cipherContext.computeTag(smallBuffer+3+4+bufferSize, 2);
+  cipherContext.computeTag(smallBuffer+3+4+bufferSize, 4);
 
   //Short range, does not need a long preamble
   writeReg(REG_PREAMBLELSB, 0x02);
@@ -493,7 +506,7 @@ void RFM69::sendSG1RT(const void * buffer, const uint8_t bufferSize)
   //in a reasonable time.
   for(int i=0;i<3;i+=1)
   {
-    if(trySend(smallBuffer,bufferSize+3+2+4))
+    if(trySend(smallBuffer,bufferSize+3+4+4))
     {
       debug("srt");
       break;
@@ -934,7 +947,7 @@ uint32_t RFM69::readHintSequence()
   x[3] = 0;
   //In place decode even though we have to re decode later,
   //We need to be able to read the hint without decoding everything
-  if (rxHeader[1] & HEADER_FEC_FIELD)
+  if ((rxHeader[1] & HEADER_FEC_FIELD) == HEADER_FEC_GOLAY)
   {
     golay_block_decode(DATA + 5, x);
   }
@@ -943,22 +956,28 @@ uint32_t RFM69::readHintSequence()
     memcpy(x, DATA + 5, 3);
   }
 
-  return ((uint32_t *)(x))[0];
+  return ((uint32_t *)(x))[0]&HINT_SEQUENCE_MASK;
 }
 
 void RFM69::useEEPROM(uint16_t addr)
 {
   eepromAddr = addr;
 
-  for (int i = 0; i < (32 + 1 + 2); i++)
+  for (int i = 0; i < (32 + 1 + 2 + 1 + 8); i++)
   {
     tmpBuffer[i] = EEPROM.read(eepromAddr + i);
   }
-  if (tmpBuffer[32] < 7)
+  if (tmpBuffer[32] < 8)
   {
     defaultChannel.setChannelKey(tmpBuffer);
     setProfile(tmpBuffer[32]);
     setChannelNumber(((uint16_t *)(tmpBuffer + 32 + 1))[0]);
+    setNodeID(tmpBuffer[32+1+2]);
+  }
+  //XOR in the fixed predefined entropy we saved in EEPROM
+  for(uint8_t i=0; i<8;i)
+  {
+    entropyPool[i] ^=tmpBuffer[32+1+2+1+i];
   }
 }
 
@@ -1005,11 +1024,14 @@ bool RFM69::listenForPairing(uint8_t deviceClass[16])
         {
           if (DATA[0] == SPECIAL_TYPE_PAIRING_REQUEST)
           {
-            urandom(buf + 33, 32);
-            Curve25519::dh1(buf + 1, secret, buf + 33);
+            urandom(tmpBuffer, 32);
+            Curve25519::dh1(buf + 1, secret, tmpBuffer);
             memcpy(buf + 33, deviceClass, 16);
             buf[0] = SPECIAL_TYPE_PAIRING_CHALLENGE;
             rawSendSG1(buf, 48, 0, HEADER_TYPE_SPECIAL);
+            state=1;
+            //Get some entropy from the packet timings
+            mixEntropy();
           }
         }
         else if (state == 1)
@@ -1018,19 +1040,24 @@ bool RFM69::listenForPairing(uint8_t deviceClass[16])
           //DH key exchange.
           if (DATA[0] == SPECIAL_TYPE_PAIRING_RESPONSE)
           {
+            //Now we have a shared secret
             Curve25519::dh2(DATA + 1, secret);
-            cipherContext.clear();
-            cipherContext.setKey(DATA + 1, 32);
-            //Reuse as something we can make all zeros
-            memset(secret, 0, 8);
-            cipherContext.setIV(secret, 8);
+            memcpy(secret,DATA+1,32);
             state = 2;
+            mixEntropy();
           }
         }
         else if (state == 2)
         {
           if (DATA[0] == SPECIAL_TYPE_PAIRING_CONFIG)
           {
+            cipherContext.clear();
+            cipherContext.setKey(secret, 32);
+            //Reuse this as a buffer we can make all zeros
+            memset(secret, 0, 8);
+            cipherContext.setIV(secret, 8);
+
+            //In place decrypt 48 bytes
             cipherContext.decrypt(DATA + 1, DATA + 1, 48);
 
             if (cipherContext.checkTag(DATA + DATALEN + 1 + 48, 8))
@@ -1043,7 +1070,7 @@ bool RFM69::listenForPairing(uint8_t deviceClass[16])
                 {
                   EEPROM.update(eepromAddr + i, DATA[1 + i]);
                 }
-
+                
                 defaultChannel.setChannelKey(DATA + 1);
                 setProfile(DATA[1 + 32]);
                 setChannelNumber(((uint16_t *)(DATA + 1 + 32))[0]);
@@ -1584,23 +1611,23 @@ bool RFM69::decodeSG1RT()
   cipherContext.setKey(defaultChannel.channelKey, 32);
   cipherContext.setIV(rxIV, 8);
 
-  cipherContext.decrypt(tmpBuffer, DATA + 3 + 4, DATALEN - (3 + 4 + 2));
+  cipherContext.decrypt(tmpBuffer, DATA + 3 + 4, DATALEN - (3 + 4 + 4));
 
-  if (!cipherContext.checkTag(DATA + (DATALEN - 2), 2))
+  if (!cipherContext.checkTag(DATA + (DATALEN - 4), 4))
   {
     debug("rbc");
     debug(DATALEN);
     return false;
   }
 
-  memcpy(DATA, tmpBuffer, DATALEN - (3 + 4 + 2));
+  memcpy(DATA, tmpBuffer, DATALEN - (3 + 4 + 4));
 
   lastSG1Presence = monotonicMillis();
   lastSG1Message = lastSG1Presence;
 
   //Remove the hint, IV, and MAC from the length
   //Store in the real data len so the user has it
-  DATALEN = DATALEN - (3 + 4+2);
+  DATALEN = DATALEN - (3 + 4+ 4);
 
   //Add null terminator that's just kind of always there.
   DATA[DATALEN] = 0;
@@ -1809,8 +1836,21 @@ bool RFM69::checkBeaconSleep()
   return 0;
 }
 
+static uint16_t bitFlags;
 void RFM69::setChannelKey(unsigned char *key)
 {
+  //First time we set a key, encrypt the entropy pool
+  //with that key. This means that the entropy doesn't
+  //Need to be truly unpredictable, just unique, the encryption
+  //takes care of any need for unpredictability.
+  if((bitFlags&1)==0)
+  {
+    cipherContext.setKey(key,32);
+    cipherContext.setIV(entropyPool+12,8);
+    cipherContext.encrypt(entropyPool,entropyPool, 20);
+  }
+  bitFlags |=1;
+
   defaultChannel.setChannelKey(key);
 }
 
@@ -1820,7 +1860,7 @@ void SG1Channel::setChannelKey(unsigned char *key)
   recalcBeaconBytes();
 
   union {
-    uint64_t intervalNumber = 0;
+    uint64_t intervalNumber = 0LL;
     uint8_t IV[8];
   };
 
@@ -2075,7 +2115,7 @@ void RFM69::setChannelNumber(uint16_t n)
 void RFM69::getEntropy(int changes)
 {
 
-  //We are looking for 512 changes in the RSSI value
+  //We are looking for N changes in the RSSI value
   //We add every reading together till we see a change, then
   //re-encrypt the entropy pool with itself as the key.
 

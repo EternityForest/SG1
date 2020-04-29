@@ -143,11 +143,13 @@ bool RFM69::initialize(uint8_t freqBand)
   //Speed up entropy with RX mode to use RSSI
   setMode(RF69_MODE_RX);
   debug(1);
-  getEntropy();
+  //We asume every change is good for 1 bit of entropy.
+  //We don't get full strength entropy here,
+  //We get it when needed, sush as when creating random time values. 
+  getEntropy(8);
   debug(2);
   setMode(RF69_MODE_STANDBY);
   setProfile(RF_PROFILE_GFSK250K);
-  initSystemTime();
   
   //Reject all packets that are older than this.
   channelTimestampHead = unixMicros();

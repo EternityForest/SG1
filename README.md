@@ -72,6 +72,8 @@ devices.
 ### radio.setChannelKey(uint8_t * key)
 This has to be a 32 byte random key that defines the channel. Only applies to SG1 messages. We ignore messages not for us.
 
+The first time you do this, the internal entropy pool gets encrypted with the key.
+
 ### radio.receiveDone()
 If we are recieving, return true and go to standby  got a packet. If not, start recieving.
 
@@ -208,13 +210,32 @@ Beacons on the current channel are recieved as if they are 0 byte packets.
 ### radio.xorshift32()
 Simple non-secure 32 bit random number generator used for internal backoff timings. Reseeded automatically, and fast, but not secure.
 
+### radio.urandom(uint8_t * target, uint8_t len)
+
+Generate N bytes of theoretically secure-ish entropy, provided the entropy pool
+has sufficient entropy. Small amounts of entropy are added every call, from timing
+information and RSSI.
+
+### radio.getEntropy(strength=128)
+Gather entropy from ambient radio noise. Takes several seconds. Entropy
+is mostly used for setting random timestamps.
+
+If you need real security, call this before settime(0).
+
 ### radio.setTime(int64_t uinxMicros,[trust])
 
-Set the time to any of 3 different types of value, and mark the time as locally
-set and therefore trusted. At least one node must do this!!
+Set the time, and mark the time as locally
+set and therefore trusted. You must set the clock for things to work!
 
-If 0, don't change anything. just mark the time. If using a random timestamp,
-it should be negative.
+You can pass the time 0 to set the time to a random timestamp if it is not already set.
+Nodes will figure out for themselves how to connect if all clocks are random, but unset
+clocks do not work.  
+
+*Note that non-repeating timestamps are very important to making this
+secure-ish. Make sure the pool has entropy before calling this!!!!!!!*
+
+Passing 0 may take some time(several seconds), as without a unique counter we need to gather strong entropy.
+
 
 Otherwise, it should be a UNIX timestamp in microseconds.
 
