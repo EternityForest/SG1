@@ -72,6 +72,7 @@ void setup()
   //Many devices can share a channel, the library will ignore messages for other channels.
 
   radio.setChannelKey((uint8_t *)key);
+
 }
 
 unsigned long last = 0;

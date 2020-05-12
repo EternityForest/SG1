@@ -151,9 +151,6 @@ bool RFM69::initialize(uint8_t freqBand)
   setMode(RF69_MODE_STANDBY);
   setProfile(RF_PROFILE_GFSK250K);
   
-  //Reject all packets that are older than this.
-  channelTimestampHead = unixMicros();
-
 
   return true;
 }
@@ -441,6 +438,9 @@ bool RFM69::_receiveDone() {
     //preventing the user API 
     //from calling this again and erasing the data
     handled=false;
+
+    //Go back to listening
+    receiveBegin();
     return true;
   }
   
@@ -497,7 +497,7 @@ void RFM69::interruptHandler() {
     DATALEN = PAYLOADLEN;
     
     unselect();
-    setMode(RF69_MODE_RX);    
+    setMode(RF69_MODE_RX);
     DATA[DATALEN] = 0; // add null at end of string // add null at end of string  
   }
   RSSI = readRSSI();

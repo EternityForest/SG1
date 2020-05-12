@@ -42,7 +42,12 @@ Reply messages have bit 7 set.
 
 
 #### Status(1 byte)
+*NOTE: The 2 high order bits of this byte are always masked off and ignored 
+before computing the checksum!!*
+
 0-3: TX RSSI before antenna gain(4db increments starting at -24db)
+
+6-7: Remaining Hops, used to allow repeaters. Must never be above 2, as loop avoidance is not implemented.
 
 ### Channel Hint[20 bits ]
 
@@ -148,7 +153,9 @@ However, there is still 2**48 possible time values, reuse is unlikely-ish.
 
 ## Pairing
 
-A device may listen for pairing messages from other devices.  Pairing is done by jumpting to channel 3 on the GFSK38K profile.
+A device may listen for pairing messages from other devices.  Pairing is done by jumpting to channel 3 on the GFSK38K profile. It is done with raw packets that are not SG1 encoded.
+
+The first byte of all these packets is the type.
 
 The device must then listen for pairing requests, which are special packets with the type 16.
 

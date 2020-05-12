@@ -1,13 +1,18 @@
 # RFM69 Library
 
 This is a library for secure-ish(Think cheap Bluetooth lock, not bank grade)
-encrypted communications with RFM69.
+encrypted communications with RFM69 on Atmega328 type chips.
 
 Work in progress, currently I have Golay code error correction
 dynamic TX power control, encryption and authentication,
 and a decent API that still lets you transmit and recieve
 raw packets if you need to.
 
+
+I also have bluetooth-style pairing using ECDH key exchange. Just type "l" on the pairing device example sketch to listen, then press "p" on the pairing master.
+
+This process takes about 20 seconds, after which you can press "s" on the device to
+save the key that the master transmitted to EEPROM, and press "r" to load it again.
 
 ## API
 
@@ -53,6 +58,29 @@ NOTE: This library is alpha, THIS CHANNEL MAPPING ALGORITHM MAY CHANGE.
 The step size is equal to whatever channel width was set in the profile, so you'll need to be careful as channel 1 may be the same frequency as channel 2 with a different step size.
 
 You don't need to worry as much about interference with SG1 messages, we just ignore anything that doesn't have the same key as us.
+
+
+### radio.listenForPairing(eepromAddr)
+
+Listen for a pairing. This will allow another nearby radio to configure the local device. It will save the recieved config in the eeprom addr, unless it is -1.
+
+You may later load that config from the EEPROM.
+
+Reserve 64 bytes for the config data.
+
+### radio.pairWithRemote(nodeID)
+
+Configure the remote device to the current rf profile, channel, and key, and give it the supplied nodeID. The pairing process uses ECDH key exchange and may take 20 seconds.
+
+Note that unlike the usual idea of pairing, this does not generate a new key, but sets the remote to match the local, so is more flexible and can be thought of as programming rather than pairing.
+
+### radio.loadConnectionFromEEPROM(addr)
+
+Load a connection from eeprom, if one is present at the addr, or else do nothing.
+
+### radio.saveConnectionToEEPROM(addr)
+
+Save a connection to the EEPROM at the given address.
 
 
 ### radio.setPowerLevel(-18);

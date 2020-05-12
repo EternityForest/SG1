@@ -188,7 +188,6 @@
 #define NODEID_ROBOT 6
 
 
-
 class SG1Channel
 {
   public:
@@ -248,9 +247,9 @@ class RFM69 {
 
 
     uint16_t bitTime=10;
-    uint16_t eepromAddr=64;
 
-    void useEEPROM(uint16_t addr);
+    void loadConnectionFromEEPROM(uint16_t addr);
+    void saveConnectionToEEPROM(uint16_t addr);
 
     bool replayProtection=true;
 
@@ -402,6 +401,7 @@ class RFM69 {
     int8_t getAutoTxPower();
     
     void addEntropy(uint8_t x);
+    void addEntropy(uint8_t * x, uint8_t len);
 
     static unsigned long monotonicMillis();
     static void addSleepTime(unsigned long t);
@@ -409,6 +409,9 @@ class RFM69 {
 
     void syncFHSS(uint16_t attempts=400);
 
+    //Sets the remote's address to the current channel key.
+    bool pairWithRemote(uint8_t nodeID);
+    bool listenForPairing(int16_t eepromAddress);
 
   protected:
     static void isr0();
@@ -429,12 +432,9 @@ class RFM69 {
     bool _recieveDone();
     bool isSpecialType();
 
-    //Sets the remote's address to the current channel key.
-    bool pairWithRemote(uint8_t nodeID);
-    bool listenForPairing(uint8_t deviceClass[16]);
 
     //Check against all the hint sequences we're looking for
-    bool checkHintSequenceRelevance(uint32_t);
+    uint8_t checkHintSequenceRelevance(uint32_t);
 
     //Reads a byte array into a 20 bit number
     static uint32_t readHintSequence(uint8_t *);
