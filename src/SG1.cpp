@@ -39,6 +39,7 @@
 #include "utility/rweather/Curve25519.h"
 
 #if defined(__AVR_ATmega328P__) || defined(__AVR_ATmega168__)
+#include <avr/sleep.h>
 
 #include "utility/sleepn0m1/Sleep_n0m1.h"
 Sleep sleepLib;
@@ -107,27 +108,20 @@ ChaChaPoly cipherContext;
 #define SPECIAL_TYPE_PAIRING_RESPONSE 18
 #define SPECIAL_TYPE_PAIRING_CONFIG 18
 
-#define SPECIAL_TIME_VALUE_IGNORE_REPLAY_PROTECTION -1
 
 static uint8_t systemTimeTrust = 0;
-//This is in monotonicMillis()
-static uint32_t lastAccurateTimeSet = 0;
 
-//Also monotonicMillis, this one just determines how long since
-//We synced either with TIMETRUST_ACCURATE, TIMETRUST_LOCAL, or with a remote node.
-//basically, it's used for determining if we should be using
-//A random FHSS search
-//Note this can't start at zero, because micros starts at zero
-static uint32_t lastTimeSync = 7998795;
+
 static unsigned long arduinoMillisOffset = 0;
 
 //Binary ppm, parts per 2**20
 static int32_t systemTimebPPMAdjust = 0;
 
-//The reference point for when we started measuring the
-//time error
-static unsigned long systemTimeCorrectionBaseline = 0;
-
+//Return bytes 3-7 of the time as a uint32_t
+static uint32_t timeToIntervalNumber(int64_t time)
+{
+  return ((uint32_t *) ((&time) + 3));
+}
 static union {
   //UNIX time in microseconds
   int64_t systemTime = -1;
@@ -148,9 +142,6 @@ void RFM69::addSleepTime(uint32_t m)
   noInterrupts();
   arduinoMillisOffset += m;
   systemTime += (m * 1000LL);
-  //Can't measure time accross sleep modes.
-  //Clock isn't accurate
-  systemTimeCorrectionBaseline = 0;
   interrupts();
 }
 
@@ -159,9 +150,9 @@ static union {
   //BAD CRYPTO ALERT!!!
   //This is shared with a totally insecure RNG
   //This leaks small amounts of information about
-  //these 32 bits. This should normally not matter,
+  //these 16 bits. This should normally not matter,
   //As we re-encrypt the entire pool both before and after use
-  uint32_t entropyRegister;
+  uint16_t entropyRegister;
 };
 
 //The non-secure RNG we use for packet timings
@@ -170,27 +161,28 @@ static union {
 
 void RFM69::initSystemTime()
 {
-  //Better to have a random time, so the encryption using it still works.
-  //Assume very small timestamps are just unset
-  if ((systemTime > -2) && (systemTime < 5000000L))
-  {
+    //We have to get entropy before doing this because we only got
+    //8 bits of it at boot.
+    getEntropy(64);
+    //Note: This always randomizes the time no matter what. We just assume it's only ever called early on
     urandom(systemTimeBytes, 8);
     //Make it obviously fake by being negative.
-    if (systemTime > 0LL)
+    //Check the raw twos complement top byte that has the sign bit
+    //Because 64 bit arithmetic uses too much space
+    if (systemTimeBytes[7] < 128)
     {
-      systemTime = (-systemTime);
+      systemTimeBytes[7] = (~systemTimeBytes[7]);
     }
-  }
 }
 
 void RFM69::syncFHSS(uint16_t attempts)
 {
   fhssOffset = xorshift16();
+
   for (uint16_t i = 0; i < attempts; i++)
   {
     //Try a random FHSS channel and listen for replies,
     //but no matter what  always go back to the normal sequence at the end
-    fhssOffset += 1;
     rawSendSG1(0, 0, 0, HEADER_TYPE_RELIABLE_SPECIAL);
     for (int j = 0; j < 100L; j++)
     {
@@ -200,21 +192,21 @@ void RFM69::syncFHSS(uint16_t attempts)
         debug("r");
         if (decodeSG1())
         {
+          fhssOffset=0;
           debug(j);
-          fhssOffset = 0;
           return;
         }
         if (receivedReply())
         {
-          fhssOffset = 0;
+          fhssOffset=0;
           debug("Sync!");
           debug(j);
           return;
         }
       }
     }
+    fhssOffset += 1;
   }
-
   fhssOffset = 0;
 }
 static unsigned long systemTimeMicros = 0;
@@ -254,13 +246,13 @@ void doTimestamp(int32_t adjustment = 0)
   //The clock has drifted and we aren't accurate anymore.
 
   //TODO:
-  if (systemTimeTrust & (TIMETRUST_ACCURATE))
+  /*if (systemTimeTrust & (TIMETRUST_ACCURATE))
   {
     if (RFM69::monotonicMillis() - lastAccurateTimeSet > 600000LL)
     {
       systemTimeMicros -= TIMETRUST_ACCURATE;
     }
-  }
+  }*/
 }
 
 void RFM69::sleepPin(int pin, int mode)
@@ -328,8 +320,6 @@ void RFM69::urandom(uint8_t *target, uint8_t len)
 
   //The pool must be seeded for this to work!!!
   //This means that you need to
-  entropyRegister += readRSSI();
-
   //Mix entropy before we actually use it, so that we don't
   //get any reuse with the non-secure uses of the pool.
   mixEntropy();
@@ -349,7 +339,7 @@ void RFM69::urandom(uint8_t *target, uint8_t len)
   //is the same as the new state of the pool
   while (len)
   {
-    int x = len;
+    uint8_t x = len;
     if (x > 16)
     {
       x = 16;
@@ -359,7 +349,6 @@ void RFM69::urandom(uint8_t *target, uint8_t len)
     len -= x;
     target += x;
   }
-
   //No information should be left about the old state
   mixEntropy();
 }
@@ -377,11 +366,6 @@ void RFM69::setTime(int64_t time, uint8_t trust)
   {
     systemTime = time;
     systemTimeMicros = micros();
-    //The seconds count of an actual realtime source are going to
-    //pretty much be a counter. When combined with a secret key,
-    //It should be a good enough source of randomness even if the
-    //HW entropy gathering isn't good.
-    entropyRegister += time >> 20;
   }
   else
   {
@@ -389,10 +373,6 @@ void RFM69::setTime(int64_t time, uint8_t trust)
   }
   systemTimeTrust = trust;
 
-  if (trust & (TIMETRUST_ACCURATE | TIMETRUST_LOCAL))
-  {
-    lastTimeSync = monotonicMillis();
-  }
   interrupts();
 }
 
@@ -407,11 +387,11 @@ int8_t RFM69::getAutoTxPower()
   //Higher speed needs more power
   if (bitTime >= 9)
   {
-    targetRSSI = -90;
+    targetRSSI = -92;
   }
   else
   {
-    targetRSSI = -85;
+    targetRSSI = -87;
   }
 
   //Detect if we aren't in auto mode
@@ -486,9 +466,11 @@ retry:
   //It it is important that we use the private hint sequences
   //here not the fixed ones. With fixed, any address collision would be constantly
   //sending bad packets, that would get through fairly reliably ever 2**32 packets.
-  smallBuffer[0] = ((uint8_t *)&(defaultChannel.privateHintSequence))[0];
-  smallBuffer[1] = ((uint8_t *)&(defaultChannel.privateHintSequence))[1];
-  smallBuffer[2] = ((uint8_t *)&(defaultChannel.privateHintSequence))[2];
+  //smallBuffer[0] = ((uint8_t *)&(defaultChannel.privateHintSequence))[0];
+  //smallBuffer[1] = ((uint8_t *)&(defaultChannel.privateHintSequence))[1];
+  //smallBuffer[2] = ((uint8_t *)&(defaultChannel.privateHintSequence))[2];
+
+  memcpy(smallBuffer, (uint8_t *)(&(defaultChannel.privateHintSequence)), 3);
 
   doTimestamp();
   noInterrupts();
@@ -569,7 +551,9 @@ void RFM69::rawSendSG1(const void *buffer, uint8_t bufferSize,
   //With header, that would exceed 64 bytes
   if (payloadSize > 58)
   {
-    Serial.println("SZ");
+    // Print "SZ"
+    Serial.write('S');
+    Serial.write('Z');
     return;
   }
 
@@ -614,9 +598,11 @@ void RFM69::rawSendSG1(const void *buffer, uint8_t bufferSize,
 
 retry:
   doTimestamp();
-  smallBuffer[0] = ((uint8_t *)&(defaultChannel.fixedHintSequence))[0];
-  smallBuffer[1] = ((uint8_t *)&(defaultChannel.fixedHintSequence))[1];
-  smallBuffer[2] = ((uint8_t *)&(defaultChannel.fixedHintSequence))[2];
+  //smallBuffer[0] = ((uint8_t *)&(defaultChannel.fixedHintSequence))[0];
+  //smallBuffer[1] = ((uint8_t *)&(defaultChannel.fixedHintSequence))[1];
+  //smallBuffer[2] = ((uint8_t *)&(defaultChannel.fixedHintSequence))[2];
+
+  memcpy(smallBuffer, (uint8_t *)(&(defaultChannel.fixedHintSequence)), 3);
 
   //First 3 bytes of this are the hint. 4th byte is nodeid part of iv.
   smallBuffer[3] = nodeID;
@@ -733,6 +719,24 @@ uint32_t applyHintSequenceMask(uint32_t x)
   return x & HINT_SEQUENCE_MASK;
 }
 
+
+//Encrypt 3 zeros, apply the HINT_SEQUENCE_MASK, then copy the result to the target
+void encryptIntoSequence(uint8_t * target)
+{
+  uint32_t x=0;
+  uint32_t in=0;
+
+  cipherContext.encrypt((uint8_t*)&x, (uint8_t *)&in, 3);
+  x=applyHintSequenceMask(x);
+  memcpy(&target,&x,4);
+}
+
+void SG1Channel::setupCipher(uint8_t * IV)
+{
+  cipherContext.setKey(channelKey,32);
+  cipherContext.setIV(IV,8);
+}
+
 void SG1Channel::recalcBeaconBytes()
 {
   //Recalc the hint sequences for this 16s period
@@ -743,12 +747,12 @@ void SG1Channel::recalcBeaconBytes()
 
   union {
     //Add 8 seconds to push us into the next period,
-    uint64_t currentIntervalNumber = (systemTime) >> 26;
+    uint64_t currentIntervalNumber = timeToIntervalNumber(systemTime);
     uint8_t currentIV[8];
   };
 
   union {
-    uint64_t altIntervalNumber = (systemTime + 8000000L) >> 26;
+    uint64_t altIntervalNumber = timeToIntervalNumber(systemTime + 8000000L);
     uint8_t altIV[8];
   };
 
@@ -757,53 +761,33 @@ void SG1Channel::recalcBeaconBytes()
   //
   if (currentIntervalNumber == altIntervalNumber)
   {
-    altIntervalNumber = (systemTime - 8000000L) >> 26;
+    altIntervalNumber = timeToIntervalNumber(systemTime - 8000000L);
   }
 
   uint8_t input[8] = {0, 0, 0, 0};
   //detect cache
-  if (currentIntervalNumber == intervalNumber)
+  if (altIntervalNumber == intervalNumber)
   {
     return;
   }
 
-  //set cache marker
-  intervalNumber = currentIntervalNumber;
-
-  //Ensure byte 3 is set to zero, it's a padding byte
-  privateHintSequence = 0;
-  privateWakeSequence = 0;
-  altPrivateHintSequence = 0;
-  altPrivateWakeSequence = 0;
-
+  //set cache marker. altIntervalNumber is used because that one changes more often.
+  intervalNumber = altIntervalNumber;
   
-  cipherContext.setKey(channelKey, 32);
-  cipherContext.setIV(altIV, 8);
+  //cipherContext.setKey(channelKey, 32);
+  //cipherContext.setIV(altIV, 8);
 
-  //8 bytes total, first 4 are the hint sequence, next are the wake sequence.
-  cipherContext.encrypt((uint8_t *)&altPrivateHintSequence, input, 3);
-  cipherContext.encrypt((uint8_t *)&altPrivateWakeSequence, input, 3);
+  setupCipher(altIV);
+  encryptIntoSequence((uint8_t *)& altPrivateHintSequence);
+  encryptIntoSequence((uint8_t *)& altPrivateWakeSequence);
 
-  //If the old and new IVs are the same, just copy,
-  //Because that encrypt takes a millisecond.
-  if (memcmp(currentIV, altIV, 8))
-  {
-    cipherContext.setKey(channelKey, 32);
-    cipherContext.setIV(currentIV, 8);
 
-    //8 bytes total, first 4 are the hint sequence, next are the wake sequence.
-    cipherContext.encrypt((uint8_t *)&privateHintSequence, input, 3);
-    cipherContext.encrypt((uint8_t *)&privateWakeSequence, input, 3);
-  }
-  else
-  {
-    memcpy((uint8_t *)&privateHintSequence, (uint8_t *)&altPrivateHintSequence, 3);
-    memcpy((uint8_t *)&privateWakeSequence, (uint8_t *)&altPrivateWakeSequence, 3);
-  }
-  privateHintSequence = applyHintSequenceMask(privateHintSequence);
-  privateWakeSequence = applyHintSequenceMask(privateWakeSequence);
-  altPrivateHintSequence = applyHintSequenceMask(altPrivateHintSequence);
-  altPrivateWakeSequence = applyHintSequenceMask(altPrivateWakeSequence);
+  //cipherContext.setKey(channelKey, 32);
+  //cipherContext.setIV(currentIV, 8);
+  setupCipher(currentIV);
+  encryptIntoSequence((uint8_t *)& privateHintSequence);
+  encryptIntoSequence((uint8_t *)& privateWakeSequence);
+
 }
 
 int64_t RFM69::getPacketTimestamp()
@@ -870,7 +854,6 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
     debug("adj");
     debug(canDoSmallAdjust);
     doTimestamp(diff);
-    lastTimeSync = monotonicMillis();
     //Stop the FHSS search when we are actually connected.
   }
 
@@ -889,13 +872,10 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
     //You got a better plan?
     channelTimestampHead = getPacketTimestamp();
 
-    systemTimeTrust = rxTimeTrust;
+    // Only local stuff can set that header, because we don't have code to really
+    // Keep track of when it becomes no longer accurate.
+    systemTimeTrust = rxTimeTrust &(~TIMETRUST_ACCURATE);
 
-    if (rxTimeTrust & TIMETRUST_ACCURATE)
-    {
-      lastAccurateTimeSet = monotonicMillis();
-    }
-    lastTimeSync = monotonicMillis();
     //Having them set our timestamp is pretty much the closest thing
     //We have to a "connection", so we send this as kind of an acknowledge
     //for stuff that wants to know if we're there, like FHSS
@@ -1020,6 +1000,15 @@ void RFM69::addEntropy(uint8_t *x, uint8_t len)
   }
 }
 
+/*void RFM69::waitForSendTime()
+{
+  if(channelNumber>1000)
+  { 
+  
+   if systemTimeBytes
+  }
+}*/
+
 bool RFM69::listenForPairing(int eepromAddr)
 {
   uint16_t oldChannel = channelNumber;
@@ -1040,7 +1029,7 @@ bool RFM69::listenForPairing(int eepromAddr)
 
   unsigned char state = 0;
 
-
+  getEntropy(128);
   //Time out after a bit
   while ((millis() - now) < 15000L)
   {
@@ -1067,8 +1056,6 @@ bool RFM69::listenForPairing(int eepromAddr)
           send(buf, 33);
           debug("st");
           state = 0;
-          //Get some entropy from the packet timings
-          mixEntropy();
         }
       
         //This packet doesn't do anything besides set up the
@@ -1086,7 +1073,6 @@ bool RFM69::listenForPairing(int eepromAddr)
           }
           memcpy(secret, DATA + 1, 32);
           state = 2;
-          mixEntropy();
         }
       }
 
@@ -1176,6 +1162,11 @@ bool RFM69::pairWithRemote(uint8_t nodeID)
   uint8_t buf[80];
   uint8_t secret[32];
 
+
+  //First, reseed the RNG
+  //because this is important
+  getEntropy(64);
+
   unsigned long now = millis();
 
   buf[0] = SPECIAL_TYPE_PAIRING_REQUEST;
@@ -1201,10 +1192,6 @@ bool RFM69::pairWithRemote(uint8_t nodeID)
           now=millis()+25000L;
           alreadyExtended=true;
         }
-        //Generate 32 bytes of randomness
-        //First, get an extra byte or two of entropy, just in case,
-        //because this is important
-        getEntropy(16);
         urandom(buf + 33, 32);
 
         //Our part of the first step
@@ -1257,6 +1244,8 @@ bool RFM69::pairWithRemote(uint8_t nodeID)
   setPowerLevel(oldPowerLevel);
 }
 
+
+
   /*
 After recieving a packet, call this to decode it.
 Returns 1 if the message was an SG1 packet addressed to 
@@ -1264,7 +1253,7 @@ Our channel.
 
 If True, DATA and DATALEN will be the decoded and decrypted payload.
 */
-  bool RFM69::decodeSG1()
+bool RFM69::decodeSG1()
   {
     int8_t _rssi = RSSI;
     gotSpecialPacket = false;
@@ -1329,7 +1318,6 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
     if (tmpDatalen == 3)
     {
       defaultChannel.recalcBeaconBytes();
-
       uint8_t relevance = checkHintSequenceRelevance(rxHintSequence);
       if (relevance)
       {
@@ -1345,20 +1333,18 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
           wakeRequestFlag = true;
         }
         else
+        {
             //It's not one of the wake sequences, just a normal beacon.
             //That means we can send it a message to keep it awake.
             if (keepRemotesAwake)
-        {
-          sendBeacon(true);
-        }
-        else
-        {
-          //Just send a normal beacon, not a wake beacon.
-          sendBeacon(false);
-        }
-
-        {
-          /* code */
+            {
+              sendBeacon(true);
+            }
+            else
+            {
+              //Just send a normal beacon in replay, not a wake beacon.
+              sendBeacon(false);
+            }
         }
         debug("rb");
         DATALEN = 0;
@@ -1493,9 +1479,9 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
       }
 
       
-      cipherContext.setKey(defaultChannel.channelKey, 32);
-      cipherContext.setIV(rxIV, 8);
-
+      //cipherContext.setKey(defaultChannel.channelKey, 32);
+      //cipherContext.setIV(rxIV, 8);
+      defaultChannel.setupCipher(rxIV);
       //Mask off the 2 bits used for hop count, as those can be decremented by untrusted
       //nodes.  We don't support repeater operation yet, but these bits are reserved for that
       rxHeader[2] &= 0b00111111;
@@ -1521,6 +1507,7 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
         debug(tmpBuffer[2 + 8]);
         return false;
       }
+
 
       memcpy(DATA, tmpBuffer + 3 + 8, remainingDataLen - (3 + 8 + 8));
 
@@ -1675,9 +1662,9 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
     }
 
     
-    cipherContext.setKey(defaultChannel.channelKey, 32);
-    cipherContext.setIV(rxIV, 8);
-
+    //cipherContext.setKey(defaultChannel.channelKey, 32);
+    //cipherContext.setIV(rxIV, 8);
+    defaultChannel.setupCipher(rxIV);
     cipherContext.decrypt(tmpBuffer, DATA + 3 + 4, DATALEN - (3 + 4 + 4));
 
     if (!cipherContext.checkTag(DATA + (DATALEN - 4), 4))
@@ -1823,22 +1810,6 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
     sendFrame(tmpBuffer + 1, header[0] - 1);
   }
 
-  //Using full power, check the current channel. Future FHSS work.
-  /*bool RFM69::trySync()
-{
-  rawSendSG1(0, 0, 12, 1,0, 0, HEADER_TYPE_RELIABLE_SPECIAL);
-  delay(120);
-  if(recieveDone())
-  {
-    decodeSG1();
-    if(isReply())
-    {
-      return true;
-    }
-  }
-  return false;
-}
-*/
 
   //Send a beacon and see if anyone tells us to wake up.
   bool RFM69::checkBeaconSleep()
@@ -1846,44 +1817,45 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
     //Any recent message indicates we should stay awake.
     if (lastSG1Message > (monotonicMillis() - 18000L))
     {
-      //But if we haven't sent a message in too long, send one
-      //anyway.
-      if (lastSentSG1 < (monotonicMillis() - 1500LL))
-      {
-        sendBeacon();
-      }
+      //But we always send a beacon anyway.
+      sendBeacon();
       return true;
     }
-    unsigned long waitTime;
 
-    //If our time is marked as accurate, or if we have gotten
+    //If we have gotten
     //a packet in the last 25 minutes we can use short beacons
-    //We need to stay in sync to within about 30s, and we're assuming the clock
-    //is around 1% accurate even though it's really like
+    //We need to stay in sync to within about 8s, and we're assuming the clock
+    //Can do that for at least an hour. Beacon operation just does't support not
+    //Having a decent clock.
 
-    if ((systemTimeTrust & TIMETRUST_ACCURATE) || lastSG1Message > (monotonicMillis() - 1500000L))
+    //So we require resync at 5000 seconds.
+
+    if (lastSG1Message > (monotonicMillis() - 5000000L))
     {
       sendBeacon();
-      waitTime = (40000L + (bitTime + 500));
     }
     else
     {
-      //Otherwise we have to send a whole packet
+      //Otherwise we have to send a whole reliable_special packet,
+      //So that they can send us the correct time.
       rawSendSG1(0, 0, 0, HEADER_TYPE_RELIABLE_SPECIAL);
-      waitTime = (40000L + (bitTime + 1200));
     }
 
     //Just long enough for them to respond.
     //We are assuming 16ms latency to get a packet and another
     //16 to reply, plus at least 10ms to actually process the crypto.
-    //due to USB serial port latency.
+    //due to USB serial port latency, and the fact that some devices might be running
+    // at 4MHz.
+
+    //Add additional time at slow bitrates.
+
     unsigned long start = micros();
-    while ((micros() - start) < waitTime)
+    while ((micros() - start) < (45000L+(bitTime*600L)))
     {
       //Use the real low power sleep mode.
-      sleepLib.adcMode();
-      sleepLib.sleepDelay(15);
-      systemTimeCorrectionBaseline = 0;
+      //The millis() timer will wake us up because this isn't deep sleep
+      delay(2);
+
       if (receiveDone())
       {
         //Them sending us valid traffic is just as good as a wake
@@ -1898,36 +1870,39 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
         }
       }
     }
-    //Don't actually sleep, user can do that
-    //sleep();
     return 0;
   }
 
   static uint16_t bitFlags;
   void RFM69::setChannelKey(unsigned char *key)
   {
+    defaultChannel.setChannelKey(key);
+
     //First time we set a key, encrypt the entropy pool
     //with that key. This means that the entropy doesn't
     //Need to be truly unpredictable, just unique, the encryption
     //takes care of any need for unpredictability.
     if ((bitFlags & 1) == 0)
     {
-      cipherContext.setKey(key, 32);
-      cipherContext.setIV(entropyPool + 12, 8);
+      //cipherContext.setKey(key, 32);
+      //cipherContext.setIV(entropyPool + 12, 8);
+      defaultChannel.setupCipher(entropyPool+12);
       cipherContext.encrypt(entropyPool, entropyPool, 20);
     }
     bitFlags |= 1;
 
-    defaultChannel.setChannelKey(key);
   }
 
   void SG1Channel::setChannelKey(unsigned char *key)
   {
     memcpy(channelKey, key, 32);
+
+    // Invalidate the hint sequence cache
+    intervalNumber=0;
     recalcBeaconBytes();
 
     union {
-      uint64_t intervalNumber = 0LL;
+      uint64_t x = 0LL;
       uint8_t IV[8];
     };
 
@@ -1965,7 +1940,7 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
       setBitrate(1200);
       setDeviation(8000);
       setChannelFilter(25000);
-      setChannelSpacing(2500);
+      setChannelSpacing(25000);
       maxTxPower = -4;
       if (channelNumber > 1000)
       {
@@ -1977,7 +1952,7 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
       setBitrate(4800);
       setDeviation(177000);
       setChannelFilter(540000);
-      setChannelSpacing(640000);
+      setChannelSpacing(750000);
       break;
 
     case RF_PROFILE_GFSK10K:
@@ -2111,9 +2086,6 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
     uint32_t minf;
     uint32_t maxf;
 
-    //Back to hz
-    uint32_t spacing = channelSpacing * 1000L;
-
     if (channelNumber == n)
     {
       if (n <= 1000)
@@ -2121,43 +2093,24 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
         return;
       }
     }
-    else
-    {
-      //Need to recalc the power level limits
-      setProfile(rfProfile);
-    }
+  
+    //Need to recalc the power level limits
+    setProfile(rfProfile);
+    
+
+    //Back to hz
+    uint32_t spacing = channelSpacing * 1000L;
 
     channelNumber = n;
 
-    if (channelNumber > 1000L)
-    {
-      uint16_t prng = n;
-      doTimestamp();
-      //Get the time in ~60ms increments
-      //Add the channel number to the time as an offset.
-      //This is so the dead time while switching channels isn't always
-      //at the same time for every hop sequence, so it isn't wasted.
-      uint64_t time = systemTime + (uint64_t)n;
-
-      time = time >> 24;
-
-      //Now we add the time and the channel, and permute it with the PRNG.
-      prng ^= time;
-      prng = applyXorshift(prng);
-
-      //Use that as the actual channel.
-      //Limit 256 channels of hopping no matter what
-      n = (prng + fhssOffset) % 256;
-    }
-
     if (freqBand == RF69_915MHZ)
     {
-      minf = 902000000UL;
-      maxf = 926000000UL;
+      minf = 902500000UL;
+      maxf = 922000000UL;
     }
     else if (freqBand == RF69_868MHZ)
     {
-      minf = 863000000UL;
+      minf = 863500000UL;
       maxf = 868000000UL;
     }
     else if (freqBand == RF69_433MHZ)
@@ -2174,9 +2127,23 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
     //This is so that low-numbered channels will naturally not overlap with
     //the same channels in different bandwidths.
     minf += spacing;
-
     uint16_t totalChannels = ((maxf - minf) / spacing);
 
+    if (channelNumber > 1000L)
+    {
+      uint16_t prng = n;
+      doTimestamp();
+      //Get the time in ~60S increments
+      uint16_t time = timeToIntervalNumber(systemTime);
+      //Now we add the time and the channel, and permute it with the PRNG.
+      prng ^= time;
+      prng = applyXorshift(prng);
+      //Use that as the actual channel.
+      //Limit 256 channels of hopping no matter what
+      n = (prng + fhssOffset) % 256;
+    }
+
+   
     //Min frequency, go up to the center frequency of ch0, then go up to the selected channel
     setFrequency(minf + (spacing / 2) + (spacing * (n % totalChannels)));
   }
@@ -2194,6 +2161,8 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
 
     int x = 0;
     int y = 0;
+
+
     for (int i = 0; i < changes; i++)
     {
       while (1)
@@ -2201,9 +2170,6 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
         y = readTemperature(0);
         y += readRSSI();
 
-        //AFC is potentially also a source of randomness
-        y += readReg(REG_FEILSB);
-        y += readReg(REG_AFCLSB);
 
         //It's not really possible for adding uncorrelated values to
         //make something less random, so there's really no reason not to add these.
@@ -2245,9 +2211,10 @@ If True, DATA and DATALEN will be the decoded and decrypted payload.
 
   bool RFM69::isSpecialType()
   {
-    if (((rxHeader[1] & HEADER_TYPE_FIELD) == HEADER_TYPE_REPLY_SPECIAL) ||
-        ((rxHeader[1] & HEADER_TYPE_FIELD) == HEADER_TYPE_RELIABLE_SPECIAL) ||
-        ((rxHeader[1] & HEADER_TYPE_FIELD) == HEADER_TYPE_SPECIAL))
+    uint8_t x = (rxHeader[1] & HEADER_TYPE_FIELD); 
+    if ((x == HEADER_TYPE_REPLY_SPECIAL) ||
+        (x == HEADER_TYPE_RELIABLE_SPECIAL) ||
+        (x == HEADER_TYPE_SPECIAL))
     {
       return true;
     }

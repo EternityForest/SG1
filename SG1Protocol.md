@@ -57,7 +57,7 @@ It is used so we don't have to try decrypting against every possible key.
 It can be one of:
 
 * The Fixed Hint Sequence(The hash of the channel key)
-* The Private Hint Sequence(Which changes every 2**26 microseconds)
+* The Private Hint Sequence(Which changes every 2**24 microseconds)
 * The Private Wake Sequence.
 
 Should it be the wake sequence, it means they are requesting all listening devices on the channel keep listening.
@@ -71,7 +71,7 @@ This is the device's Node ID, followed by 7 bytes of the current time, in 256us 
 
 ### Calculating the private hint and wake sequences:
 
-One must first divide the system time by 2**26, then use that 8 byte signed number as the IV, with the channel key as the key, to encrypt 6 bytes of zeros.
+First calculate the current Interval Number, then pad that to 8 bytes with the channel key as the key, to encrypt 6 bytes of zeros.
 
 After masking off the top 4 high order bits in each, the first 3 are the private hint, the second 3 are the private wake sequence.
 
@@ -86,6 +86,13 @@ The associated data is the 3 bytes of header after FEC decoding, followed by the
 
 ### MAC(Not present in Beacon messages)
 This is 8 bytes long, and it is the ChaChaPoly AEAD mac
+
+## Interval Numbers
+
+The interval number is the result of taking the system time, and converting bytes 3-7 of it, and interpreting them as a uint32_t
+
+Essentially, it is dividing by 2**24, ignoring the sign bit. The value changes approximately every 16 seconds and does not
+repeat for over 2000 years.
 
 ## Special packets
 
@@ -220,21 +227,49 @@ Power Limit: -4dbm
 Power limit: -4db
 
 ### 3: GFSK4800
-4800 baud, 177KHz deviation, 600Khz channel spacing
+4800 baud, 177KHz deviation, 750khz channel spacing
 
 ### 4: GFSK10K
-10kbaud, 177khz deviation, 600Khz spacing
+10kbaud, 177khz deviation, 750khz spacing
 
 ### 5: GFSK38K
-38400 baud, 177khz deviation, 600khz spacing
+38400 baud, 177khz deviation, 750khz spacing
 
 ### 6: GFSK100K:
-100kbaud, 177khz deviation, 600khz spacing.
+100kbaud, 177khz deviation, 750khz spacing.
 
 ### 7: GFSK250K
 250Kbaud, 177khz deviation, 750khz spacing.
 Do not use on 433MHz.
 
+## Regional Frequency Ranges
+SG1 currently has 3 regional frequency profiles. Note that these do not occupy the full
+allowable range in the US or the EU.  This is intentional, as we reserve the top of the spectrum for
+high-duty cycle very short range applications with manually assigned power.
+
+We also avoid the bottom 500KHz in most profiles for the same reason, to not interfere with any narrowband long range
+and low data rate but high reliability devices one may want to use there, with a manually programmed frequency.
+
+Frequency ranges are also designed to be even multiples of 0.75MHz, the channel spacing for most profiles, as
+there would be no reason to use more.
+
+```cpp
+    if (freqBand == RF69_915MHZ)
+    {
+      minf = 902500000UL;
+      maxf = 922000000UL;
+    }
+    else if (freqBand == RF69_868MHZ)
+    {
+      minf = 863500000UL;
+      maxf = 868000000UL;
+    }
+    else if (freqBand == RF69_433MHZ)
+    {
+      minf = 433050000UL;
+      maxf = 434790000UL;
+    }
+```
 
 ## Channel Numbers
 
@@ -242,20 +277,18 @@ To convert a ch number to a frequency, first compute the number of channels that
 
 The frequency is then center of the Nth channel, modulo the number of channels should the user select one that is too high.
 
-This always reserves some bandwidth at the bottom of the band for lower bandwidth applications.
+This always reserves some bandwidth at the bottom of the band for applications using a lower bandwidth protocol.
 
-
-
-Channels above 1000 are actually hop patterns. for FHSS.
+Channels above 1000 are actually hop patterns or FHSS.
 
 ## FHSS 
 
-FHSS is currently specified by the reference implementation. Frequencies always hop
-every 2**16 microseconds. An offset is used so that different hop patterns do not
-change over at the same time.
+FHSS is currently specified by the reference implementation. Frequencies hop at a rate determined by the
+Interval Number, or 16 seconds. The hop sequence is entirely determined by the channel number and system time,
+so many devices with different keys can use the same base station.
 
-Only the middle half of any hop slot should be used, for maximum tolerance of misalignment.
-
+Note that this is not enough to comply with FCC definitions of spread spectrum, and may/will result in 16-second long
+dropouts in connection, when very heavily loaded channels are used.
 
 ## Channel Defaults:
 

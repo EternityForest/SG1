@@ -58,30 +58,30 @@ ChaChaPoly::~ChaChaPoly()
     clean(state);
 }
 
-size_t ChaChaPoly::keySize() const
+uint8_t ChaChaPoly::keySize() const
 {
     // Default key size is 256-bit, but any key size is allowed.
     return 32;
 }
 
-size_t ChaChaPoly::ivSize() const
+uint8_t ChaChaPoly::ivSize() const
 {
     // Return 8 but we also support 12-byte nonces in setIV().
     return 8;
 }
 
-size_t ChaChaPoly::tagSize() const
+uint8_t ChaChaPoly::tagSize() const
 {
     // Any tag size between 1 and 16 is supported.
     return 16;
 }
 
-bool ChaChaPoly::setKey(const uint8_t *key, size_t len)
+bool ChaChaPoly::setKey(const uint8_t *key, uint8_t len)
 {
     return chacha.setKey(key, len);
 }
 
-bool ChaChaPoly::setIV(const uint8_t *iv, size_t len)
+bool ChaChaPoly::setIV(const uint8_t *iv, uint8_t len)
 {
     // ChaCha::setIV() supports both 64-bit and 96-bit nonces.
     if (!chacha.setIV(iv, len))
@@ -102,7 +102,7 @@ bool ChaChaPoly::setIV(const uint8_t *iv, size_t len)
     return true;
 }
 
-void ChaChaPoly::encrypt(uint8_t *output, const uint8_t *input, size_t len)
+void ChaChaPoly::encrypt(uint8_t *output, const uint8_t *input, uint8_t len)
 {
     if (!state.dataStarted) {
         poly1305.pad();
@@ -113,7 +113,7 @@ void ChaChaPoly::encrypt(uint8_t *output, const uint8_t *input, size_t len)
     state.dataSize += len;
 }
 
-void ChaChaPoly::decrypt(uint8_t *output, const uint8_t *input, size_t len)
+void ChaChaPoly::decrypt(uint8_t *output, const uint8_t *input, uint8_t len)
 {
     if (!state.dataStarted) {
         poly1305.pad();
@@ -124,7 +124,7 @@ void ChaChaPoly::decrypt(uint8_t *output, const uint8_t *input, size_t len)
     state.dataSize += len;
 }
 
-void ChaChaPoly::addAuthData(const void *data, size_t len)
+void ChaChaPoly::addAuthData(const void *data, uint8_t len)
 {
     if (!state.dataStarted) {
         poly1305.update(data, len);
@@ -132,7 +132,7 @@ void ChaChaPoly::addAuthData(const void *data, size_t len)
     }
 }
 
-void ChaChaPoly::computeTag(void *tag, size_t len)
+void ChaChaPoly::computeTag(void *tag, uint8_t len)
 {
     uint64_t sizes[2];
 
@@ -147,7 +147,7 @@ void ChaChaPoly::computeTag(void *tag, size_t len)
     clean(sizes);
 }
 
-bool ChaChaPoly::checkTag(const void *tag, size_t len)
+bool ChaChaPoly::checkTag(const void *tag, uint8_t len)
 {
     // Can never match if the expected tag length is too long.
     if (len > 16)

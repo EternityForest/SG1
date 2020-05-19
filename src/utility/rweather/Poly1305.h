@@ -33,8 +33,8 @@ public:
     ~Poly1305();
 
     void reset(const void *key);
-    void update(const void *data, size_t len);
-    void finalize(const void *nonce, void *token, size_t len);
+    void update(const void *data, uint8_t len);
+    void finalize(const void *nonce, void *token, uint8_t len);
 
     void pad();
 

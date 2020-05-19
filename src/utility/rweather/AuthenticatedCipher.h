@@ -31,12 +31,12 @@ public:
     AuthenticatedCipher();
     virtual ~AuthenticatedCipher();
 
-    virtual size_t tagSize() const = 0;
+    virtual uint8_t tagSize() const = 0;
 
-    virtual void addAuthData(const void *data, size_t len) = 0;
+    virtual void addAuthData(const void *data, uint8_t len) = 0;
 
-    virtual void computeTag(void *tag, size_t len) = 0;
-    virtual bool checkTag(const void *tag, size_t len) = 0;
+    virtual void computeTag(void *tag, uint8_t len) = 0;
+    virtual bool checkTag(const void *tag, uint8_t len) = 0;
 };
 
 #endif

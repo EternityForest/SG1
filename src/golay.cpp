@@ -89,21 +89,24 @@ static const uint32_t PROGMEM golay_decode_matrix[12] = {
 
 
 /* Function to compute the Hamming weight of a 12-bit integer */
-static uint32_t weight12(uint32_t vector)
+static uint8_t weight12(uint16_t vector)
 {
-    uint32_t w=0;
-    uint32_t i;
-    for( i=0; i<12; i++ )
+    uint8_t w=0;
+    for(uint8_t i=0; i<12; i++ )
+    {
         if( vector & 1<<i )
+        {
             w++;
+        }
+    }
     return w;
 }
 
 /* returns the golay coding of the given 12-bit word */
-static uint32_t golay_coding(uint32_t w)
+static uint32_t golay_coding(uint16_t w)
 {
     uint32_t out=0;
-    uint32_t i;
+    uint8_t i;
 
     for( i = 0; i<12; i++ ) {
         if( w & 1<<i )
@@ -113,7 +116,7 @@ static uint32_t golay_coding(uint32_t w)
 }
 
 /* encodes a 12-bit word to a 24-bit codeword */
-uint32_t golay_encode(uint32_t w)
+uint32_t golay_encode(uint16_t w)
 {
     return ((uint32_t)w) | ((uint32_t)golay_coding(w))<<12;
 }
@@ -141,7 +144,8 @@ int32_t golay_errors(uint32_t codeword)
 {
     uint32_t received_data, received_parity;
     uint32_t syndrome;
-    uint32_t w,i;
+    uint8_t i;
+    uint8_t w;
     uint32_t inv_syndrome = 0;
 
     received_parity = (uint32_t)(codeword>>12);
@@ -189,7 +193,7 @@ int32_t golay_errors(uint32_t codeword)
      * closer to another codeword. */
 
     for( i = 0; i<12; i++ ) {
-        uint32_t error = 1<<i;
+        uint16_t error = 1<<i;
         uint32_t coding_error = pgm_read_dword(&(golay_encode_matrix[i]));
         if( weight12(syndrome^coding_error) <= 2 ) {
             return (int32_t)((((uint32_t)(syndrome^coding_error))<<12) | (uint32_t)error) ;
@@ -222,7 +226,7 @@ int32_t golay_errors(uint32_t codeword)
     /* Final shot: try with 2 errors in the data bits, and 1 in the parity
      * bits; as before we try each of the bits in the parity in turn */
     for( i = 0; i<12; i++ ) {
-        uint32_t error = 1<<i;
+        uint16_t error = 1<<i;
         uint32_t coding_error = pgm_read_dword(&(golay_decode_matrix[i]));
         if( weight12(inv_syndrome^coding_error) <= 2 ) {
             uint32_t error_word = ((uint32_t)(inv_syndrome^coding_error)) | ((uint32_t)error)<<12;

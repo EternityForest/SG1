@@ -84,9 +84,9 @@ void loop()
 
   const char * pl = "One ring to rule them all\0\0";
 
-  //Every 10 seconds, send a  message.
+  //Every 1 seconds, send a  message.
   
-  if ( ((millis() - last) > 10000L))
+  if ( ((millis() - last) > 1000L))
   {
     radio.sendSG1((uint8_t *)pl, strlen(pl));
     last = millis();

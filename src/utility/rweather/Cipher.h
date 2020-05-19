@@ -32,14 +32,14 @@ public:
     Cipher();
     virtual ~Cipher();
 
-    virtual size_t keySize() const = 0;
-    virtual size_t ivSize() const = 0;
+    virtual uint8_t keySize() const = 0;
+    virtual uint8_t ivSize() const = 0;
 
-    virtual bool setKey(const uint8_t *key, size_t len) = 0;
-    virtual bool setIV(const uint8_t *iv, size_t len) = 0;
+    virtual bool setKey(const uint8_t *key, uint8_t len) = 0;
+    virtual bool setIV(const uint8_t *iv, uint8_t len) = 0;
 
-    virtual void encrypt(uint8_t *output, const uint8_t *input, size_t len) = 0;
-    virtual void decrypt(uint8_t *output, const uint8_t *input, size_t len) = 0;
+    virtual void encrypt(uint8_t *output, const uint8_t *input, uint8_t len) = 0;
+    virtual void decrypt(uint8_t *output, const uint8_t *input, uint8_t len) = 0;
 
     virtual void clear() = 0;
 };

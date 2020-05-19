@@ -145,7 +145,7 @@ bool RFM69::initialize(uint8_t freqBand)
   debug(1);
   //We asume every change is good for 1 bit of entropy.
   //We don't get full strength entropy here,
-  //We get it when needed, sush as when creating random time values. 
+  //We get it when needed, suchh as when creating random time values. 
   getEntropy(8);
   debug(2);
   setMode(RF69_MODE_STANDBY);
@@ -298,17 +298,6 @@ bool RFM69::trySend(const void* buffer, uint8_t bufferSize)
   //Hopping slot boundaries are offset different ammounts for every hop pattern
   if(channelNumber>1000)
   {
-    //If we aren't synced, we have no clue when the slot boundaries
-    //are, so  we send as fast as possible to catch them with replies
-   
-    uint16_t x =unixMicros()+channelNumber;
-    while ((x < 5000L)|| (x>60000L))
-    {
-      x=unixMicros()+channelNumber;
-      _receiveDone();
-    }
-  
-
     setChannelNumber(channelNumber);
   }
 

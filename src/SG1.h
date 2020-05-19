@@ -192,6 +192,8 @@ class SG1Channel
 {
   public:
     void recalcBeaconBytes();
+    void setupCipher(uint8_t * IV);
+
 
     //Return true if packet is for this radio
     //bool checkPacket(RFM69 * rf);
@@ -223,7 +225,8 @@ class SG1Channel
 
     //The current interval number we have cached data for
     //This matches to one for altPrivateHintSequence,
-    //not the old one.
+    //not the current one.  This is because the alt actually changes at the halfway point,
+    //And at every interval transition.
     uint64_t  intervalNumber;
 };
 
@@ -500,9 +503,9 @@ void urandom(uint8_t * target, uint8_t len);
 
 #endif
 
-//#define debug(x) Serial.println((x));Serial.flush()
+#define debug(x) Serial.println((x));Serial.flush()
 //#define REGISTER_DETAIL
-#define debug(x)
+//#define debug(x)
 
 
 //WakeRequests keep track of channels that we want to send wake requests

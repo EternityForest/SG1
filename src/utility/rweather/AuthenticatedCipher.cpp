@@ -63,7 +63,7 @@ AuthenticatedCipher::~AuthenticatedCipher()
 }
 
 /**
- * \fn size_t AuthenticatedCipher::tagSize() const
+ * \fn uint8_t AuthenticatedCipher::tagSize() const
  * \brief Returns the size of the authentication tag.
  *
  * \return The size of the authentication tag in bytes.
@@ -75,7 +75,7 @@ AuthenticatedCipher::~AuthenticatedCipher()
  */
 
 /**
- * \fn void AuthenticatedCipher::addAuthData(const void *data, size_t len)
+ * \fn void AuthenticatedCipher::addAuthData(const void *data, uint8_t len)
  * \brief Adds extra data that will be authenticated but not encrypted.
  *
  * \param data The extra data to be authenticated.
@@ -94,7 +94,7 @@ AuthenticatedCipher::~AuthenticatedCipher()
  */
 
 /**
- * \fn void AuthenticatedCipher::computeTag(void *tag, size_t len)
+ * \fn void AuthenticatedCipher::computeTag(void *tag, uint8_t len)
  * \brief Finalizes the encryption process and computes the authentication tag.
  *
  * \param tag Points to the buffer to write the tag to.
@@ -105,7 +105,7 @@ AuthenticatedCipher::~AuthenticatedCipher()
  */
 
 /**
- * \fn bool AuthenticatedCipher::checkTag(const void *tag, size_t len)
+ * \fn bool AuthenticatedCipher::checkTag(const void *tag, uint8_t len)
  * \brief Finalizes the decryption process and checks the authentication tag.
  *
  * \param tag The tag value from the incoming ciphertext to be checked.

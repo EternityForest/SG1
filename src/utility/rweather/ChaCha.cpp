@@ -56,13 +56,13 @@ ChaCha::~ChaCha()
     clean(stream);
 }
 
-size_t ChaCha::keySize() const
+uint8_t ChaCha::keySize() const
 {
     // Default key size is 256-bit, but any key size is allowed.
     return 32;
 }
 
-size_t ChaCha::ivSize() const
+uint8_t ChaCha::ivSize() const
 {
     // We return 8 but we also support 12-byte nonces in setIV().
     return 8;
@@ -84,7 +84,7 @@ size_t ChaCha::ivSize() const
  * \sa numRounds()
  */
 
-bool ChaCha::setKey(const uint8_t *key, size_t len)
+bool ChaCha::setKey(const uint8_t *key, uint8_t len)
 {
     static const char tag128[] PROGMEM = "expand 16-byte k";
     static const char tag256[] PROGMEM = "expand 32-byte k";
@@ -108,7 +108,7 @@ bool ChaCha::setKey(const uint8_t *key, size_t len)
     return true;
 }
 
-bool ChaCha::setIV(const uint8_t *iv, size_t len)
+bool ChaCha::setIV(const uint8_t *iv, uint8_t len)
 {
     // From draft-nir-cfrg-chacha20-poly1305-10.txt, we can use either
     // 64-bit or 96-bit nonces.  The 96-bit nonce consists of the high
@@ -142,7 +142,7 @@ bool ChaCha::setIV(const uint8_t *iv, size_t len)
  *
  * \sa setIV()
  */
-bool ChaCha::setCounter(const uint8_t *counter, size_t len)
+bool ChaCha::setCounter(const uint8_t *counter, uint8_t len)
 {
     // Normally both the IV and the counter are 8 bytes in length.
     // However, if the IV was 12 bytes, then a 4 byte counter can be used.
@@ -155,7 +155,7 @@ bool ChaCha::setCounter(const uint8_t *counter, size_t len)
     }
 }
 
-void ChaCha::encrypt(uint8_t *output, const uint8_t *input, size_t len)
+void ChaCha::encrypt(uint8_t *output, const uint8_t *input, uint8_t len)
 {
     while (len > 0) {
         if (posn >= 64) {
@@ -187,7 +187,7 @@ void ChaCha::encrypt(uint8_t *output, const uint8_t *input, size_t len)
     }
 }
 
-void ChaCha::decrypt(uint8_t *output, const uint8_t *input, size_t len)
+void ChaCha::decrypt(uint8_t *output, const uint8_t *input, uint8_t len)
 {
     encrypt(output, input, len);
 }

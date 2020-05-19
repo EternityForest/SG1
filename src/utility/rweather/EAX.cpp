@@ -51,29 +51,29 @@ EAXCommon::~EAXCommon()
     clean(state);
 }
 
-size_t EAXCommon::keySize() const
+uint8_t EAXCommon::keySize() const
 {
     return omac.blockCipher()->keySize();
 }
 
-size_t EAXCommon::ivSize() const
+uint8_t EAXCommon::ivSize() const
 {
     // Can use any size but 16 is recommended.
     return 16;
 }
 
-size_t EAXCommon::tagSize() const
+uint8_t EAXCommon::tagSize() const
 {
     // Tags can be up to 16 bytes in length.
     return 16;
 }
 
-bool EAXCommon::setKey(const uint8_t *key, size_t len)
+bool EAXCommon::setKey(const uint8_t *key, uint8_t len)
 {
     return omac.blockCipher()->setKey(key, len);
 }
 
-bool EAXCommon::setIV(const uint8_t *iv, size_t len)
+bool EAXCommon::setIV(const uint8_t *iv, uint8_t len)
 {
     // Must have at least 1 byte for the IV.
     if (!len)
@@ -97,7 +97,7 @@ bool EAXCommon::setIV(const uint8_t *iv, size_t len)
     return true;
 }
 
-void EAXCommon::encrypt(uint8_t *output, const uint8_t *input, size_t len)
+void EAXCommon::encrypt(uint8_t *output, const uint8_t *input, uint8_t len)
 {
     if (state.authMode)
         closeAuthData();
@@ -105,7 +105,7 @@ void EAXCommon::encrypt(uint8_t *output, const uint8_t *input, size_t len)
     omac.update(state.hash, output, len);
 }
 
-void EAXCommon::decrypt(uint8_t *output, const uint8_t *input, size_t len)
+void EAXCommon::decrypt(uint8_t *output, const uint8_t *input, uint8_t len)
 {
     if (state.authMode)
         closeAuthData();
@@ -113,13 +113,13 @@ void EAXCommon::decrypt(uint8_t *output, const uint8_t *input, size_t len)
     encryptCTR(output, input, len);
 }
 
-void EAXCommon::addAuthData(const void *data, size_t len)
+void EAXCommon::addAuthData(const void *data, uint8_t len)
 {
     if (state.authMode)
         omac.update(state.hash, (const uint8_t *)data, len);
 }
 
-void EAXCommon::computeTag(void *tag, size_t len)
+void EAXCommon::computeTag(void *tag, uint8_t len)
 {
     closeTag();
     if (len > 16)
@@ -127,7 +127,7 @@ void EAXCommon::computeTag(void *tag, size_t len)
     memcpy(tag, state.tag, len);
 }
 
-bool EAXCommon::checkTag(const void *tag, size_t len)
+bool EAXCommon::checkTag(const void *tag, uint8_t len)
 {
     // Can never match if the expected tag length is too long.
     if (len > 16)
@@ -168,7 +168,7 @@ void EAXCommon::closeAuthData()
  * \param input The input buffer to read from.
  * \param len The number of bytes to process.
  */
-void EAXCommon::encryptCTR(uint8_t *output, const uint8_t *input, size_t len)
+void EAXCommon::encryptCTR(uint8_t *output, const uint8_t *input, uint8_t len)
 {
     while (len > 0) {
         // Do we need to start a new block?

@@ -33,20 +33,20 @@ public:
     ChaChaPoly();
     virtual ~ChaChaPoly();
 
-    size_t keySize() const;
-    size_t ivSize() const;
-    size_t tagSize() const;
+    uint8_t keySize() const;
+    uint8_t ivSize() const;
+    uint8_t tagSize() const;
 
-    bool setKey(const uint8_t *key, size_t len);
-    bool setIV(const uint8_t *iv, size_t len);
+    bool setKey(const uint8_t *key, uint8_t len);
+    bool setIV(const uint8_t *iv, uint8_t len);
 
-    void encrypt(uint8_t *output, const uint8_t *input, size_t len);
-    void decrypt(uint8_t *output, const uint8_t *input, size_t len);
+    void encrypt(uint8_t *output, const uint8_t *input, uint8_t len);
+    void decrypt(uint8_t *output, const uint8_t *input, uint8_t len);
 
-    void addAuthData(const void *data, size_t len);
+    void addAuthData(const void *data, uint8_t len);
 
-    void computeTag(void *tag, size_t len);
-    bool checkTag(const void *tag, size_t len);
+    void computeTag(void *tag, uint8_t len);
+    bool checkTag(const void *tag, uint8_t len);
 
     void clear();
 

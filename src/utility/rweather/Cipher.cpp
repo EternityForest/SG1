@@ -55,7 +55,7 @@ Cipher::~Cipher()
 }
 
 /**
- * \fn size_t Cipher::keySize() const
+ * \fn uint8_t Cipher::keySize() const
  * \brief Default size of the key for this cipher, in bytes.
  *
  * If the cipher supports variable-sized keys, keySize() indicates the
@@ -65,7 +65,7 @@ Cipher::~Cipher()
  */
 
 /**
- * \fn size_t Cipher::ivSize() const
+ * \fn uint8_t Cipher::ivSize() const
  * \brief Size of the initialization vector for this cipher, in bytes.
  *
  * If the cipher does not need an initialization vector, this function
@@ -73,7 +73,7 @@ Cipher::~Cipher()
  */
 
 /**
- * \fn bool Cipher::setKey(const uint8_t *key, size_t len)
+ * \fn bool Cipher::setKey(const uint8_t *key, uint8_t len)
  * \brief Sets the key to use for future encryption and decryption operations.
  *
  * \param key The key to use.
@@ -91,7 +91,7 @@ Cipher::~Cipher()
  */
 
 /**
- * \fn bool Cipher::setIV(const uint8_t *iv, size_t len)
+ * \fn bool Cipher::setIV(const uint8_t *iv, uint8_t len)
  * \brief Sets the initialization vector to use for future encryption and
  * decryption operations.
  *
@@ -111,7 +111,7 @@ Cipher::~Cipher()
  */
 
 /**
- * \fn void Cipher::encrypt(uint8_t *output, const uint8_t *input, size_t len)
+ * \fn void Cipher::encrypt(uint8_t *output, const uint8_t *input, uint8_t len)
  * \brief Encrypts an input buffer and writes the ciphertext to an
  * output buffer.
  *
@@ -128,7 +128,7 @@ Cipher::~Cipher()
  */
 
 /**
- * \fn void Cipher::decrypt(uint8_t *output, const uint8_t *input, size_t len)
+ * \fn void Cipher::decrypt(uint8_t *output, const uint8_t *input, uint8_t len)
  * \brief Decrypts an input buffer and writes the plaintext to an
  * output buffer.
  *

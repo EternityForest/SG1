@@ -33,18 +33,18 @@ public:
     explicit ChaCha(uint8_t numRounds = 20);
     virtual ~ChaCha();
 
-    size_t keySize() const;
-    size_t ivSize() const;
+    uint8_t keySize() const;
+    uint8_t ivSize() const;
 
     uint8_t numRounds() const { return rounds; }
     void setNumRounds(uint8_t numRounds) { rounds = numRounds; }
 
-    bool setKey(const uint8_t *key, size_t len);
-    bool setIV(const uint8_t *iv, size_t len);
-    bool setCounter(const uint8_t *counter, size_t len);
+    bool setKey(const uint8_t *key, uint8_t len);
+    bool setIV(const uint8_t *iv, uint8_t len);
+    bool setCounter(const uint8_t *counter, uint8_t len);
 
-    void encrypt(uint8_t *output, const uint8_t *input, size_t len);
-    void decrypt(uint8_t *output, const uint8_t *input, size_t len);
+    void encrypt(uint8_t *output, const uint8_t *input, uint8_t len);
+    void decrypt(uint8_t *output, const uint8_t *input, uint8_t len);
 
     void clear();
 

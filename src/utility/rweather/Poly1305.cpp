@@ -142,7 +142,7 @@ void Poly1305::reset(const void *key)
  *
  * \sa pad(), reset(), finalize()
  */
-void Poly1305::update(const void *data, size_t len)
+void Poly1305::update(const void *data, uint8_t len)
 {
     // Break the input up into 128-bit chunks and process each in turn.
     const uint8_t *d = (const uint8_t *)data;
@@ -179,7 +179,7 @@ void Poly1305::update(const void *data, size_t len)
  *
  * \sa reset(), update()
  */
-void Poly1305::finalize(const void *nonce, void *token, size_t len)
+void Poly1305::finalize(const void *nonce, void *token, uint8_t len)
 {
     dlimb_t carry;
     uint8_t i;
