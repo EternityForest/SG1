@@ -58,10 +58,10 @@ void RFM69::sleepMCU(unsigned long x)
 }
 #endif
 
-//Two tmp buffers sized to hold an entire packet, rounded up to 80
+//Two tmp buffers sized to hold an entire packet, rounded up to 68
 //for overflow protection, and so we can use the very end for misc scratchpad stuff
-uint8_t tmpBuffer[80];
-uint8_t smallBuffer[80];
+uint8_t tmpBuffer[68];
+uint8_t smallBuffer[68];
 
 void golay_block_encode(uint8_t *in, uint8_t *out);
 bool golay_block_decode(uint8_t *in, uint8_t *out);
@@ -161,9 +161,6 @@ static union {
 
 void RFM69::initSystemTime()
 {
-    //We have to get entropy before doing this because we only got
-    //8 bits of it at boot.
-    getEntropy(64);
     //Note: This always randomizes the time no matter what. We just assume it's only ever called early on
     urandom(systemTimeBytes, 8);
     //Make it obviously fake by being negative.
@@ -273,7 +270,9 @@ int64_t RFM69::unixMicros(uint32_t adj)
 //On account of the fact we are essentially XORing the state with something
 static void mixEntropy()
 {
-  entropyRegister += micros();
+  //Pick a fairly random arbitrary position to xor the micros into,
+  //so that it's separate from the entropyRegister
+  ((uint32_t *)entropyPool)[3] ^= micros();
   cipherContext.setKey(entropyPool, 20);
   cipherContext.setIV(systemTimeBytes, 8);
   cipherContext.encrypt(entropyPool, entropyPool, 20);
@@ -634,18 +633,18 @@ retry:
   cipherContext.encrypt((uint8_t *)smallBuffer + 3 + 8, (uint8_t *)buffer, bufferSize - padding);
 
   //This is the zero we will encrypt
-  smallBuffer[79] = 0;
+  uint8_t padByte = 0;
 
   //Now encrypt some zeros for padding
   //Only 2 padding bytes can ever be needed.
   if (padding > 0)
   {
-    cipherContext.encrypt((uint8_t *)smallBuffer + 3 + 8 + bufferSize - padding, (uint8_t *)(smallBuffer + 79), 1);
+    cipherContext.encrypt((uint8_t *)smallBuffer + 3 + 8 + bufferSize - padding, &padByte, 1);
   }
   if (padding == 2)
   {
     cipherContext.encrypt((uint8_t *)smallBuffer + 3 + 8 + (bufferSize - padding) + 1,
-                          (uint8_t *)(smallBuffer + 79), 1);
+                          &padByte, 1);
   }
 
   //memcpy((uint8_t *)smallBuffer+3+8, (uint8_t *)buffer, bufferSize);
@@ -1029,7 +1028,6 @@ bool RFM69::listenForPairing(int eepromAddr)
 
   unsigned char state = 0;
 
-  getEntropy(128);
   //Time out after a bit
   while ((millis() - now) < 15000L)
   {
@@ -1154,6 +1152,9 @@ bool RFM69::pairWithRemote(uint8_t nodeID)
   int8_t oldPowerLevel = _powerLevel;
   bool alreadyExtended = 0;
 
+  //Set to 0 marks that we are done with search phase
+  unsigned long  lastSearch=1;
+
   //The pairing channel is always 3
   setProfile(RF_PROFILE_GFSK38K);
   setPowerLevel(-18);
@@ -1162,18 +1163,20 @@ bool RFM69::pairWithRemote(uint8_t nodeID)
   uint8_t buf[80];
   uint8_t secret[32];
 
-
-  //First, reseed the RNG
-  //because this is important
-  getEntropy(64);
-
   unsigned long now = millis();
 
   buf[0] = SPECIAL_TYPE_PAIRING_REQUEST;
-  send(buf, 1);
   
   while ((millis() - now) < 10000)
   {
+    //While we have not yet seen a response,
+    //We are going to keep sending this.
+    if(alreadyExtended==0)
+    {
+      send(buf, 1);
+      delay(250);
+    }
+
     if (receiveDone())
     {
       if(RSSI< -55)
@@ -2148,7 +2151,7 @@ bool RFM69::decodeSG1()
     setFrequency(minf + (spacing / 2) + (spacing * (n % totalChannels)));
   }
 
-  void RFM69::getEntropy(int changes)
+  void RFM69::getEntropy(uint8_t changes)
   {
 
     //We are looking for N changes in the RSSI value
@@ -2159,17 +2162,17 @@ bool RFM69::decodeSG1()
     //of values that change every other time. Still, it's probably
     //Usable especially since we are always adding entropy from different sources.
 
-    int x = 0;
-    int y = 0;
+    uint8_t x = 0;
+    uint8_t y = 0;
 
 
     for (int i = 0; i < changes; i++)
     {
       while (1)
-      { //Look for changes in RSSI and temp
-        y = readTemperature(0);
-        y += readRSSI();
-
+      { //Look for changes in RSSI.
+        //Don't bother looking at other data, RSSI can be read without
+        //changing the mode of the sensor
+        y = (uint8_t)readRSSI();
 
         //It's not really possible for adding uncorrelated values to
         //make something less random, so there's really no reason not to add these.

@@ -140,7 +140,7 @@ void OMAC::initNext(uint8_t omac[16], uint8_t tag)
  *
  * \sa initFirst(), initNext(), finalize()
  */
-void OMAC::update(uint8_t omac[16], const uint8_t *data, size_t size)
+void OMAC::update(uint8_t omac[16], const uint8_t *data, uint8_t size)
 {
     while (size > 0) {
         // Encrypt the current block if it is already full.

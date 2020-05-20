@@ -27,6 +27,10 @@
 #include "ProgMemUtil.h"
 #include <string.h>
 
+// Modified by Daniel Dunn, this isn't meant for top secret stuff,
+// I'm getting rid of all the clean calls.
+#define clean(x)  do { ; } while (0)
+
 /**
  * \class ChaCha ChaCha.h <ChaCha.h>
  * \brief ChaCha stream cipher.

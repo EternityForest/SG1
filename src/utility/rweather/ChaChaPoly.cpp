@@ -25,6 +25,10 @@
 #include "EndianUtil.h"
 #include <string.h>
 
+// Modified by Daniel Dunn, this isn't meant for top secret stuff,
+// I'm getting rid of all the clean calls.
+#define clean(x)  do { ; } while (0)
+
 /**
  * \class ChaChaPoly ChaChaPoly.h <ChaChaPoly.h>
  * \brief Authenticated cipher based on ChaCha and Poly1305

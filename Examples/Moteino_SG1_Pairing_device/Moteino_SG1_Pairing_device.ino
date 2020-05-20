@@ -27,30 +27,38 @@ void setup()
   // Open a serial port so we can send keystrokes to the module:
 
   Serial.begin(9600);
-  Serial.print("Node ");
-  Serial.println(" ready");
+  Serial.print("Node ...");
 
 
   // Initialize the RFM69HCW:
   // radio.setCS(10);  //uncomment this if using Pro Micro
   radio.initialize(FREQUENCY);
+  Serial.print("Initialized\n");
 
   //RX filter bandwidth and deviation are automatically set
   //when you do this. Channel spacing is also calculated automatically.
   radio.setProfile(RF_PROFILE_GFSK250K);
 
+  Serial.println(3);Serial.flush();
+  
+
   //This channel number determines the actual RF frequency. Set it to anything you
   //Want, the library knows how to wrap around if you go over the top channel.
   radio.setChannelNumber(150);
+    Serial.println(3);Serial.flush();
+
 
   //Manual, use -127 to set automatic.
   radio.setPowerLevel(-127);
+  Serial.println(3);Serial.flush();
 
   //Show state of module
   //radio.readAllRegs();
 
   //Every node on a channel needs a unique ID byte
   radio.setNodeID('A');
+  Serial.println(4);Serial.flush();
+
 
 
   //Set a random time. This allows things to work without a clock, but it makes the whole thing subject to replay attacks,
@@ -60,11 +68,15 @@ void setup()
   // And so is almost certainly fine for home automation, weather stations, and the like,
   //In addition. the "selection" of replayable values would be limited to about a ten second window of matching packets.
   radio.setTime(null);
+  
+  Serial.println(3);Serial.flush();
 
   //The encryption key used both for actual encryption, and also for message filtering.
   //Many devices can share a channel, the library will ignore messages for other channels.
 
   radio.setChannelKey((uint8_t *)key);
+    Serial.println(3);Serial.flush();
+
 
 }
 
@@ -113,8 +125,12 @@ void loop()
   if(radio.receiveDone())
   {
     Serial.println("rawmsg");
+      Serial.println(9);Serial.flush();
+
     if(radio.decodeSG1())
     {
+        Serial.println(10);Serial.flush();
+
       Serial.println("Recieved:");
       Serial.println((char *)radio.DATA);
     }

@@ -89,7 +89,7 @@ bool RFM69::initialize(uint8_t freqBand)
                { REG_SYNCVALUE4, 0xD4 },
 
     /* 0x37 */ { REG_PACKETCONFIG1, RF_PACKET1_FORMAT_VARIABLE | RF_PACKET1_DCFREE_OFF | RF_PACKET1_CRC_OFF | RF_PACKET1_CRCAUTOCLEAR_OFF | RF_PACKET1_ADRSFILTERING_OFF },
-    /* 0x38 */ { REG_PAYLOADLENGTH, 128 }, // in variable length mode: the max frame size, not used in TX
+    /* 0x38 */ { REG_PAYLOADLENGTH, 66 }, // in variable length mode: the max frame size, not used in TX
     ///* 0x39 */ { REG_NODEADRS, nodeID }, // turned off because we're not using address filtering
     /* 0x3C */ { REG_FIFOTHRESH, RF_FIFOTHRESH_TXSTART_FIFONOTEMPTY | RF_FIFOTHRESH_VALUE }, // TX on FIFO not empty
     /* 0x3D */ { REG_PACKETCONFIG2, RF_PACKET2_RXRESTARTDELAY_2BITS | RF_PACKET2_AUTORXRESTART_ON | RF_PACKET2_AES_OFF }, // RXRESTARTDELAY must match transmitter PA ramp-down time (bitrate dependent)
@@ -108,7 +108,7 @@ bool RFM69::initialize(uint8_t freqBand)
 #endif
 
   uint32_t start = millis();
-  uint8_t timeout = 50;
+  const uint8_t timeout = 50;
   do writeReg(REG_SYNCVALUE1, 0xAA); while (readReg(REG_SYNCVALUE1) != 0xaa && millis()-start < timeout);
   start = millis();
   do writeReg(REG_SYNCVALUE1, 0x55); while (readReg(REG_SYNCVALUE1) != 0x55 && millis()-start < timeout);
@@ -144,9 +144,7 @@ bool RFM69::initialize(uint8_t freqBand)
   setMode(RF69_MODE_RX);
   debug(1);
   //We asume every change is good for 1 bit of entropy.
-  //We don't get full strength entropy here,
-  //We get it when needed, suchh as when creating random time values. 
-  getEntropy(8);
+  getEntropy(96);
   debug(2);
   setMode(RF69_MODE_STANDBY);
   setProfile(RF_PROFILE_GFSK250K);

@@ -303,7 +303,6 @@ class RFM69 {
     bool initialize(uint8_t freqBand);
 
     void setNetwork(uint8_t networkID);
-    void getEntropy(int changes=128);
     
     bool decodeSG1Header();
     bool decodeSG1();
@@ -422,6 +421,7 @@ class RFM69 {
     static volatile bool _haveData;
     virtual void sendFrame(const void* buffer, uint8_t size);
     bool trySend(const void* buffer, uint8_t bufferSize);
+    void getEntropy(uint8_t changes=128);
 
     void recalcBeaconBytes();
     void doPerPacketTimeFunctions(uint8_t rxTimeTrust);
@@ -503,9 +503,9 @@ void urandom(uint8_t * target, uint8_t len);
 
 #endif
 
-#define debug(x) Serial.println((x));Serial.flush()
+//#define debug(x) Serial.println((x));Serial.flush()
 //#define REGISTER_DETAIL
-//#define debug(x)
+#define debug(x)
 
 
 //WakeRequests keep track of channels that we want to send wake requests

@@ -36,7 +36,7 @@ public:
 
     void initFirst(uint8_t omac[16]);
     void initNext(uint8_t omac[16], uint8_t tag);
-    void update(uint8_t omac[16], const uint8_t *data, size_t size);
+    void update(uint8_t omac[16], const uint8_t *data, uint8_t size);
     void finalize(uint8_t omac[16]);
 
     void clear();

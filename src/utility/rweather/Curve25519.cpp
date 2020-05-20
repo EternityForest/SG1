@@ -55,6 +55,10 @@
 #define strict_clean(x)     clean(x)
 #else
 #define strict_clean(x)     do { ; } while (0)
+
+// Modified by Daniel Dunn, this isn't meant for top secret stuff,
+// I'm getting rid of all the clean calls.
+#define clean(x)  do { ; } while (0)
 #endif
 
 /**
@@ -292,7 +296,8 @@ bool Curve25519::dh2(uint8_t k[32], uint8_t f[32])
     weak  = isWeakPoint(k);                     // Is "k" weak before?
     weak |= ((eval(k, f, k) ^ 0x01) & 0x01);    // Is "k" weak during?
     weak |= isWeakPoint(k);                     // Is "k" weak after?
-    clean(f, 32);
+
+    // clean(f, 32);
     return (bool)((weak ^ 0x01) & 0x01);
 }
 

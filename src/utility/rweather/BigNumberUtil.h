@@ -72,34 +72,34 @@ typedef unsigned __int128 dlimb_t;
 class BigNumberUtil
 {
 public:
-    static void unpackLE(limb_t *limbs, size_t count,
-                         const uint8_t *bytes, size_t len);
-    static void unpackBE(limb_t *limbs, size_t count,
-                         const uint8_t *bytes, size_t len);
-    static void packLE(uint8_t *bytes, size_t len,
-                       const limb_t *limbs, size_t count);
-    static void packBE(uint8_t *bytes, size_t len,
-                       const limb_t *limbs, size_t count);
+    static void unpackLE(limb_t *limbs, uint8_t count,
+                         const uint8_t *bytes, uint8_t len);
+    static void unpackBE(limb_t *limbs, uint8_t count,
+                         const uint8_t *bytes, uint8_t len);
+    static void packLE(uint8_t *bytes, uint8_t len,
+                       const limb_t *limbs, uint8_t count);
+    static void packBE(uint8_t *bytes, uint8_t len,
+                       const limb_t *limbs, uint8_t count);
 
     static limb_t add(limb_t *result, const limb_t *x,
-                      const limb_t *y, size_t size);
+                      const limb_t *y, uint8_t size);
     static limb_t sub(limb_t *result, const limb_t *x,
-                      const limb_t *y, size_t size);
-    static void mul(limb_t *result, const limb_t *x, size_t xcount,
-                    const limb_t *y, size_t ycount);
+                      const limb_t *y, uint8_t size);
+    static void mul(limb_t *result, const limb_t *x, uint8_t xcount,
+                    const limb_t *y, uint8_t ycount);
     static void reduceQuick(limb_t *result, const limb_t *x,
-                            const limb_t *y, size_t size);
+                            const limb_t *y, uint8_t size);
 
     static limb_t add_P(limb_t *result, const limb_t *x,
-                        const limb_t *y, size_t size);
+                        const limb_t *y, uint8_t size);
     static limb_t sub_P(limb_t *result, const limb_t *x,
-                        const limb_t *y, size_t size);
-    static void mul_P(limb_t *result, const limb_t *x, size_t xcount,
-                      const limb_t *y, size_t ycount);
+                        const limb_t *y, uint8_t size);
+    static void mul_P(limb_t *result, const limb_t *x, uint8_t xcount,
+                      const limb_t *y, uint8_t ycount);
     static void reduceQuick_P(limb_t *result, const limb_t *x,
-                              const limb_t *y, size_t size);
+                              const limb_t *y, uint8_t size);
 
-    static limb_t isZero(const limb_t *x, size_t size);
+    static limb_t isZero(const limb_t *x, uint8_t size);
 
 private:
     // Constructor and destructor are private - cannot instantiate this class.

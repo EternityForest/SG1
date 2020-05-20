@@ -52,8 +52,8 @@
  *
  * \sa packLE(), unpackBE()
  */
-void BigNumberUtil::unpackLE(limb_t *limbs, size_t count,
-                             const uint8_t *bytes, size_t len)
+void BigNumberUtil::unpackLE(limb_t *limbs, uint8_t count,
+                             const uint8_t *bytes, uint8_t len)
 {
 #if BIGNUMBER_LIMB_8BIT
     if (len < count) {
@@ -160,8 +160,8 @@ void BigNumberUtil::unpackLE(limb_t *limbs, size_t count,
  *
  * \sa packBE(), unpackLE()
  */
-void BigNumberUtil::unpackBE(limb_t *limbs, size_t count,
-                             const uint8_t *bytes, size_t len)
+void BigNumberUtil::unpackBE(limb_t *limbs, uint8_t count,
+                             const uint8_t *bytes, uint8_t len)
 {
 #if BIGNUMBER_LIMB_8BIT
     while (count > 0 && len > 0) {
@@ -261,8 +261,8 @@ void BigNumberUtil::unpackBE(limb_t *limbs, size_t count,
  *
  * \sa unpackLE(), packBE()
  */
-void BigNumberUtil::packLE(uint8_t *bytes, size_t len,
-                           const limb_t *limbs, size_t count)
+void BigNumberUtil::packLE(uint8_t *bytes, uint8_t len,
+                           const limb_t *limbs, uint8_t count)
 {
 #if BIGNUMBER_LIMB_8BIT
     if (len <= count) {
@@ -372,12 +372,12 @@ void BigNumberUtil::packLE(uint8_t *bytes, size_t len,
  *
  * \sa unpackLE(), packBE()
  */
-void BigNumberUtil::packBE(uint8_t *bytes, size_t len,
-                           const limb_t *limbs, size_t count)
+void BigNumberUtil::packBE(uint8_t *bytes, uint8_t len,
+                           const limb_t *limbs, uint8_t count)
 {
 #if BIGNUMBER_LIMB_8BIT
     if (len > count) {
-        size_t size = len - count;
+        uint8_t size = len - count;
         memset(bytes, 0, size);
         len -= size;
         bytes += size;
@@ -390,10 +390,10 @@ void BigNumberUtil::packBE(uint8_t *bytes, size_t len,
         *bytes++ = *(--limbs);
     }
 #elif BIGNUMBER_LIMB_16BIT
-    size_t countBytes = count * sizeof(limb_t);
+    uint8_t countBytes = count * sizeof(limb_t);
     limb_t word;
     if (len >= countBytes) {
-        size_t size = len - countBytes;
+        uint8_t size = len - countBytes;
         memset(bytes, 0, size);
         len -= size;
         bytes += size;
@@ -411,10 +411,10 @@ void BigNumberUtil::packBE(uint8_t *bytes, size_t len,
         *bytes++ = (uint8_t)word;
     }
 #elif BIGNUMBER_LIMB_32BIT
-    size_t countBytes = count * sizeof(limb_t);
+    uint8_t countBytes = count * sizeof(limb_t);
     limb_t word;
     if (len >= countBytes) {
-        size_t size = len - countBytes;
+        uint8_t size = len - countBytes;
         memset(bytes, 0, size);
         len -= size;
         bytes += size;
@@ -444,10 +444,10 @@ void BigNumberUtil::packBE(uint8_t *bytes, size_t len,
         *bytes++ = (uint8_t)word;
     }
 #elif BIGNUMBER_LIMB_64BIT
-    size_t countBytes = count * sizeof(limb_t);
+    uint8_t countBytes = count * sizeof(limb_t);
     limb_t word;
     if (len >= countBytes) {
-        size_t size = len - countBytes;
+        uint8_t size = len - countBytes;
         memset(bytes, 0, size);
         len -= size;
         bytes += size;
@@ -493,7 +493,7 @@ void BigNumberUtil::packBE(uint8_t *bytes, size_t len,
  * \sa sub(), mul()
  */
 limb_t BigNumberUtil::add(limb_t *result, const limb_t *x,
-                          const limb_t *y, size_t size)
+                          const limb_t *y, uint8_t size)
 {
     dlimb_t carry = 0;
     while (size > 0) {
@@ -520,7 +520,7 @@ limb_t BigNumberUtil::add(limb_t *result, const limb_t *x,
  * \sa add(), mul()
  */
 limb_t BigNumberUtil::sub(limb_t *result, const limb_t *x,
-                          const limb_t *y, size_t size)
+                          const limb_t *y, uint8_t size)
 {
     dlimb_t borrow = 0;
     while (size > 0) {
@@ -543,10 +543,10 @@ limb_t BigNumberUtil::sub(limb_t *result, const limb_t *x,
  *
  * \sa mul_P()
  */
-void BigNumberUtil::mul(limb_t *result, const limb_t *x, size_t xcount,
-                        const limb_t *y, size_t ycount)
+void BigNumberUtil::mul(limb_t *result, const limb_t *x, uint8_t xcount,
+                        const limb_t *y, uint8_t ycount)
 {
-    size_t i, j;
+    uint8_t i, j;
     dlimb_t carry;
     limb_t word;
     const limb_t *xx;
@@ -596,7 +596,7 @@ void BigNumberUtil::mul(limb_t *result, const limb_t *x, size_t xcount,
  * \sa reduceQuick_P()
  */
 void BigNumberUtil::reduceQuick(limb_t *result, const limb_t *x,
-                                const limb_t *y, size_t size)
+                                const limb_t *y, uint8_t size)
 {
     // Subtract "y" from "x" and turn the borrow into an AND mask.
     limb_t mask = sub(result, x, y, size);
@@ -626,7 +626,7 @@ void BigNumberUtil::reduceQuick(limb_t *result, const limb_t *x,
  * \sa sub_P(), mul_P()
  */
 limb_t BigNumberUtil::add_P(limb_t *result, const limb_t *x,
-                            const limb_t *y, size_t size)
+                            const limb_t *y, uint8_t size)
 {
     dlimb_t carry = 0;
     while (size > 0) {
@@ -653,7 +653,7 @@ limb_t BigNumberUtil::add_P(limb_t *result, const limb_t *x,
  * \sa add_P(), mul_P()
  */
 limb_t BigNumberUtil::sub_P(limb_t *result, const limb_t *x,
-                            const limb_t *y, size_t size)
+                            const limb_t *y, uint8_t size)
 {
     dlimb_t borrow = 0;
     while (size > 0) {
@@ -677,10 +677,10 @@ limb_t BigNumberUtil::sub_P(limb_t *result, const limb_t *x,
  *
  * \sa mul()
  */
-void BigNumberUtil::mul_P(limb_t *result, const limb_t *x, size_t xcount,
-                          const limb_t *y, size_t ycount)
+void BigNumberUtil::mul_P(limb_t *result, const limb_t *x, uint8_t xcount,
+                          const limb_t *y, uint8_t ycount)
 {
-    size_t i, j;
+    uint8_t i, j;
     dlimb_t carry;
     limb_t word;
     const limb_t *xx;
@@ -732,7 +732,7 @@ void BigNumberUtil::mul_P(limb_t *result, const limb_t *x, size_t xcount,
  * \sa reduceQuick()
  */
 void BigNumberUtil::reduceQuick_P(limb_t *result, const limb_t *x,
-                                  const limb_t *y, size_t size)
+                                  const limb_t *y, uint8_t size)
 {
     // Subtract "y" from "x" and turn the borrow into an AND mask.
     limb_t mask = sub_P(result, x, y, size);
@@ -758,7 +758,7 @@ void BigNumberUtil::reduceQuick_P(limb_t *result, const limb_t *x,
  *
  * This function attempts to make the determination in constant time.
  */
-limb_t BigNumberUtil::isZero(const limb_t *x, size_t size)
+limb_t BigNumberUtil::isZero(const limb_t *x, uint8_t size)
 {
     limb_t word = 0;
     while (size > 0) {

@@ -245,10 +245,8 @@ has sufficient entropy. Small amounts of entropy are added every call, from timi
 information and RSSI.
 
 ### radio.getEntropy(strength=128)
-Gather entropy from ambient radio noise. Takes several seconds. Entropy
-is mostly used for setting random timestamps.
 
-If you need real security, call this before settime(0).
+REMOVED you should never need to call this, the pool is seeded when initializing the radio, and entropy is continually added from packet arrival timings.
 
 ### radio.setTime(int64_t uinxMicros,[trust])
 
