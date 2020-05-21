@@ -203,6 +203,7 @@ void callback(byte command, byte *payload, byte length) {
         Serial.write(42);
         Serial.write(radio.DATALEN + 32+ 1+1);
         Serial.write(MSG_DECODED);
+        Serial.write(radio.rxPathLoss);
         Serial.write(radio.RSSI);
         Serial.write(radio.defaultChannel.channelKey, 32);
         Serial.write(radio.DATA, 32);
@@ -225,8 +226,6 @@ void callback(byte command, byte *payload, byte length) {
 
     //MSG_RNG lets you get a random number.
     case MSG_RNG:
-
-      radio.getEntropy(32);
       radio.urandom(tmp, 1);
       nfSend(MSG_RNG, tmp, 1);
       break;

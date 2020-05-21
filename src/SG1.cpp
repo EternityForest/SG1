@@ -937,7 +937,7 @@ uint32_t RFM69::readHintSequence()
     memcpy(x, DATA + 5, 3);
   }
 
-  return ((uint32_t *)(x))[0] & HINT_SEQUENCE_MASK;
+  return applyHintSequenceMask(((uint32_t *)(x))[0]);
 }
 
 void RFM69::loadConnectionFromEEPROM(uint16_t eepromAddr)
@@ -953,7 +953,7 @@ void RFM69::loadConnectionFromEEPROM(uint16_t eepromAddr)
     setProfile(tmpBuffer[2+32]);
     setChannelNumber(((uint16_t *)(tmpBuffer + 2+ 32 + 1))[0]);
     setNodeID(tmpBuffer[2+ 32 + 1 + 2]);
-    addEntropy(tmpBuffer + 2+ 32 + 1 + 2 + 1, 8);
+    //addEntropy(tmpBuffer + 2+ 32 + 1 + 2 + 1, 8);
   }
 }
 
@@ -1581,7 +1581,7 @@ bool RFM69::decodeSG1()
   uint32_t RFM69::readHintSequence(uint8_t * x)
   {
     uint32_t rxHintSequence = ((uint32_t *)(x))[0];
-    rxHintSequence = rxHintSequence & HINT_SEQUENCE_MASK;
+    rxHintSequence = applyHintSequenceMask (rxHintSequence);
     return rxHintSequence;
   }
 
@@ -1880,21 +1880,19 @@ bool RFM69::decodeSG1()
   void RFM69::setChannelKey(unsigned char *key)
   {
     defaultChannel.setChannelKey(key);
-
-    //First time we set a key, encrypt the entropy pool
-    //with that key. This means that the entropy doesn't
-    //Need to be truly unpredictable, just unique, the encryption
-    //takes care of any need for unpredictability.
-    if ((bitFlags & 1) == 0)
-    {
-      //cipherContext.setKey(key, 32);
-      //cipherContext.setIV(entropyPool + 12, 8);
-      defaultChannel.setupCipher(entropyPool+12);
-      cipherContext.encrypt(entropyPool, entropyPool, 20);
-    }
-    bitFlags |= 1;
+  }
+/*
+  void SG1Channel::setChannelKeyPrecalculated(unsigned char *key, uint32_t * hints)
+  {
+    memcpy(channelKey, key, 32);
+    fixedHintSequence=hints[0];
+    privateHintSequence=hints[0];
+    privateWakeSequence=hints[0];
+    altPrivateHintSequence=hints[0];
+    altPrivateWakeSequence=hints[0];
 
   }
+*/
 
   void SG1Channel::setChannelKey(unsigned char *key)
   {
