@@ -289,21 +289,3 @@ If trust is supplied, you should explicitly indicate how trusted the time source
 Current system timestamp, either a positive real time, or negative random network time not referenced to an epoch. Set adj to something nonzero to add or remove time from it.  
 
 This timestamp can change at any time, including going backwards, as it is synced with SG1.
-
-### static radio.monotonicMillis()
-Same as the default millis(), but can by affected by addSleepTime.
-
-### static radio.addSleepTime(uint32_t x)
-
-Adds time to both system and monotonic timers.
-
-In particular, as this timestamp uses mircros(), so when doing some kinds of deep sleep you will want to add amount of time slept to it.
-
-
-### radio.sleepMCU(x)
-Put the MCU into sleep mode for x milliseconds. During this time micros
-and millis() may not advance, but radio.monotonicMillis() will correct for this
-and should behave as expected. Automatically calls addSleepTime.
-
-### radio.sleepPin(pin, mode)
-Sleep until a transition happens on the pin(mode can be RISING, LOW, etc).

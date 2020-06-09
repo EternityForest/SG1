@@ -27,7 +27,6 @@
 #define RFM69_h
 #include <Arduino.h>            // assumes Arduino IDE v1.0 or greater
 #include <SPI.h>
-#include <EEPROM.h>
 
 
 //Levels of time trust. OR the trust attributes together to get a trust level
@@ -148,6 +147,10 @@
 #elif defined(ESP8266)
   #define RF69_IRQ_PIN          4
   #define RF69_SPI_CS           15
+#elif defined(ARDUINO_SAMD_FEATHER_M0) // Feather M0 w/Radio
+  #define RF69_CS      8
+  #define RF69_IRQ_PIN     3
+  #define RF69_RST     4
 #else
   #define RF69_IRQ_PIN          2
 #endif
@@ -212,7 +215,6 @@ class SG1Channel
 
     uint32_t fixedHintSequence;
 
-    void sleepPin(int pin, int mode);
 
 
 
@@ -227,17 +229,19 @@ class SG1Channel
     //This matches to one for altPrivateHintSequence,
     //not the current one.  This is because the alt actually changes at the halfway point,
     //And at every interval transition.
-    uint64_t  intervalNumber;
+    uint32_t  intervalNumber;
 };
 
-class RFM69 {
+
+class RFM69{
   public:
+
     uint8_t DATA[RF69_MAX_DATA_LEN+1]; // RX/TX payload buffer, including end of string NULL char
     uint8_t DATALEN;
     uint8_t PAYLOADLEN;
     uint8_t RAWPAYLOADLEN;
 
-    int16_t RSSI; // most accurate RSSI during reception (closest to the reception). RSSI of last packet.
+    int8_t RSSI = -127; // most accurate RSSI during reception (closest to the reception). RSSI of last packet.
     uint8_t _mode; // should be protected?
 
     bool keepRemotesAwake=false;
@@ -251,6 +255,8 @@ class RFM69 {
 
     uint16_t bitTime=10;
 
+
+
     void loadConnectionFromEEPROM(uint16_t addr);
     void saveConnectionToEEPROM(uint16_t addr);
 
@@ -262,8 +268,12 @@ class RFM69 {
     //IV, including timestamp
     uint8_t rxIV[8];
 
+
     //UNIX timestamp micros
     static int64_t unixMicros(uint32_t adj=0);
+
+    unsigned long getUnixTime32();
+    void setUnixTime32(uint32_t time);
 
     bool receivedReply();
     bool isReply();
@@ -362,15 +372,13 @@ class RFM69 {
     void setFrequency(uint32_t freqHz);
 
     void setCS(uint8_t newSPISlaveSelect);
-    int16_t readRSSI(bool forceTrigger=false); // *current* signal strength indicator; e.g. < -90dBm says the frequency channel is free + ready to transmit
+    int8_t readRSSI(bool forceTrigger=false); // *current* signal strength indicator; e.g. < -90dBm says the frequency channel is free + ready to transmit
     void spyMode(bool onOff=true);
     void promiscuous(bool onOff=true); //deprecated, replaced with spyMode()
     virtual void setHighPower(bool onOFF=true); // has to be called after initialize() for RFM69HW
     virtual void setPowerLevel(int8_t level); // reduce/increase transmit power level
     virtual void rawSetPowerLevel(int8_t level); // reduce/increase transmit power level
-
     void sleep();
-    void sleepMCU(unsigned long t);
     uint8_t readTemperature(uint8_t calFactor=0); // get CMOS temperature (8bit)
     void rcCalibration(); // calibrate the internal RC oscillator for use in wide temperature variations - see datasheet section [4.3.5. RC Timer Accuracy]
 
@@ -380,7 +388,6 @@ class RFM69 {
     void readAllRegs();
     void readAllRegsCompact();
     bool isRecieving();
-    void sleepPin(int pin,int mode);
 
     int64_t rxTime=0;
 
@@ -405,8 +412,7 @@ class RFM69 {
     void addEntropy(uint8_t x);
     void addEntropy(uint8_t * x, uint8_t len);
 
-    static unsigned long monotonicMillis();
-    static void addSleepTime(unsigned long t);
+    static unsigned long approxUnixMillis();
     virtual bool _receiveDone();
 
     void syncFHSS(uint16_t attempts=400);
@@ -468,7 +474,6 @@ class RFM69 {
     uint8_t _slaveSelectPin;
     uint8_t _interruptPin;
     uint8_t _interruptNum;
-    uint16_t _address;
     bool _spyMode;
     int8_t _powerLevel;
     bool _isRFM69HW;

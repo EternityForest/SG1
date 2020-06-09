@@ -133,7 +133,7 @@ bool RFM69::initialize(uint8_t freqBand)
   while (((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00) && millis()-start < timeout); // wait for ModeReady
   if (millis()-start >= timeout)
     {
-      debug("failed");
+    Serial.write('F');
     return false;
     }
   attachInterrupt(_interruptNum, RFM69::isr0, RISING);
@@ -399,8 +399,6 @@ void RFM69::receiveBegin() {
   //Set this to zero, it's the "In progress" recieve  
   PAYLOADLEN = 0;
 
-
-  RSSI = 0;
   if (readReg(REG_IRQFLAGS2) & RF_IRQFLAGS2_PAYLOADREADY)
     writeReg(REG_PACKETCONFIG2, (readReg(REG_PACKETCONFIG2) & 0xFB) | RF_PACKET2_RXRESTART); // avoid RX deadlocks
   writeReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_01); // set DIO0 to "PAYLOADREADY" in receive mode
@@ -493,7 +491,7 @@ void RFM69::interruptHandler() {
 
 
 // get the received signal strength indicator (RSSI)
-int16_t RFM69::readRSSI(bool forceTrigger) {
+int8_t RFM69::readRSSI(bool forceTrigger) {
   int16_t rssi = 0;
   if (forceTrigger)
   {

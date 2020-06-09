@@ -38,24 +38,11 @@
 #include "utility/rweather/EAX.h"
 #include "utility/rweather/Curve25519.h"
 
-#if defined(__AVR_ATmega328P__) || defined(__AVR_ATmega168__)
-#include <avr/sleep.h>
 
-#include "utility/sleepn0m1/Sleep_n0m1.h"
-Sleep sleepLib;
-void RFM69::sleepMCU(unsigned long x)
-{
-  sleepLib.pwrDownMode();
-  sleepLib.sleepDelay(x);
-  addSleepTime(x);
-}
-
+#ifdef defined(E2END) && E2END>0
+#include <EEPROM.h>
 #else
-//fallback
-void RFM69::sleepMCU(unsigned long x)
-{
-  delay(x);
-}
+#warning NO EEPROM, SAVING PAIRING WILL NOT WORK
 #endif
 
 //Two tmp buffers sized to hold an entire packet, rounded up to 68
@@ -111,8 +98,8 @@ ChaChaPoly cipherContext;
 
 static uint8_t systemTimeTrust = 0;
 
+uint32_t millisToUnix=0;
 
-static unsigned long arduinoMillisOffset = 0;
 
 //Binary ppm, parts per 2**20
 static int32_t systemTimebPPMAdjust = 0;
@@ -120,7 +107,8 @@ static int32_t systemTimebPPMAdjust = 0;
 //Return bytes 3-7 of the time as a uint32_t
 static uint32_t timeToIntervalNumber(int64_t time)
 {
-  return ((uint32_t *) ((&time) + 3));
+  uint32_t interval = ((uint64_t)time)>>24;
+  return(interval);
 }
 static union {
   //UNIX time in microseconds
@@ -132,17 +120,10 @@ static union {
   //}
 };
 
-unsigned long RFM69::monotonicMillis()
-{
-  return arduinoMillisOffset + millis();
-}
 
-void RFM69::addSleepTime(uint32_t m)
+unsigned long RFM69::approxUnixMillis()
 {
-  noInterrupts();
-  arduinoMillisOffset += m;
-  systemTime += (m * 1000LL);
-  interrupts();
+  return millis()+millisToUnix;
 }
 
 static union {
@@ -171,6 +152,7 @@ void RFM69::initSystemTime()
       systemTimeBytes[7] = (~systemTimeBytes[7]);
     }
 }
+
 
 void RFM69::syncFHSS(uint16_t attempts)
 {
@@ -239,23 +221,23 @@ void doTimestamp(int32_t adjustment = 0)
   systemTime += y;
   systemTimeMicros = x;
 
+  //First compute the system time/1024 for approx millis.
+  //Now we subtract millis to get a conversion to turn millis into
+  //unix millis.
+  millisToUnix = ( ((uint32_t *)(systemTimeBytes+1))[0]>>4)-millis();
   //If it has been ten minutes since accurate setting,
   //The clock has drifted and we aren't accurate anymore.
 
   //TODO:
   /*if (systemTimeTrust & (TIMETRUST_ACCURATE))
   {
-    if (RFM69::monotonicMillis() - lastAccurateTimeSet > 600000LL)
+    if (RFM69::approxUnixMillis() - lastAccurateTimeSet > 600000LL)
     {
       systemTimeMicros -= TIMETRUST_ACCURATE;
     }
   }*/
 }
 
-void RFM69::sleepPin(int pin, int mode)
-{
-  sleepLib.sleepPinInterrupt(pin, mode);
-}
 int64_t RFM69::unixMicros(uint32_t adj)
 {
   doTimestamp(adj);
@@ -359,12 +341,13 @@ void RFM69::addEntropy(uint8_t x)
 
 void RFM69::setTime(int64_t time, uint8_t trust)
 {
-  noInterrupts();
   //Special value 0 indicates we randomize the time if needed.
   if (time)
   {
+    noInterrupts();
     systemTime = time;
     systemTimeMicros = micros();
+    interrupts();
   }
   else
   {
@@ -372,7 +355,6 @@ void RFM69::setTime(int64_t time, uint8_t trust)
   }
   systemTimeTrust = trust;
 
-  interrupts();
 }
 
 volatile bool RFM69::_haveData;
@@ -401,7 +383,7 @@ int8_t RFM69::getAutoTxPower()
 
   //If we have a message in the last 80s, that means that we can
   //use TX power control
-  if ((monotonicMillis() - lastSG1Presence) < (-(80UL * 1000UL)))
+  if ((approxUnixMillis() - lastSG1Presence) < (-(80UL * 1000UL)))
   {
     //Target an RSSI on the other end of -90
     txPower = targetRSSI;
@@ -699,7 +681,7 @@ retry:
     {
       debug("snt");
       debug(header[0] - 1);
-      lastSentSG1 = monotonicMillis();
+      lastSentSG1 = approxUnixMillis();
       return;
     }
     delayMicroseconds(xorshift16() & 0b1111111111L);
@@ -727,7 +709,7 @@ void encryptIntoSequence(uint8_t * target)
 
   cipherContext.encrypt((uint8_t*)&x, (uint8_t *)&in, 3);
   x=applyHintSequenceMask(x);
-  memcpy(&target,&x,4);
+  memcpy(target,&x,4);
 }
 
 void SG1Channel::setupCipher(uint8_t * IV)
@@ -746,14 +728,18 @@ void SG1Channel::recalcBeaconBytes()
 
   union {
     //Add 8 seconds to push us into the next period,
-    uint64_t currentIntervalNumber = timeToIntervalNumber(systemTime);
+    uint32_t currentIntervalNumber;
     uint8_t currentIV[8];
   };
+  memset(currentIV,0, 8);
+  currentIntervalNumber = timeToIntervalNumber(systemTime);
 
   union {
-    uint64_t altIntervalNumber = timeToIntervalNumber(systemTime + 8000000L);
+    uint32_t altIntervalNumber;
     uint8_t altIV[8];
   };
+  memset(currentIV,0,8);
+  altIntervalNumber = timeToIntervalNumber(systemTime + 8000000L);
 
   //So we tried incrementing, but it didn't change, meaning
   //the actual closest interval is the previous one
@@ -763,7 +749,6 @@ void SG1Channel::recalcBeaconBytes()
     altIntervalNumber = timeToIntervalNumber(systemTime - 8000000L);
   }
 
-  uint8_t input[8] = {0, 0, 0, 0};
   //detect cache
   if (altIntervalNumber == intervalNumber)
   {
@@ -787,6 +772,7 @@ void SG1Channel::recalcBeaconBytes()
   encryptIntoSequence((uint8_t *)& privateHintSequence);
   encryptIntoSequence((uint8_t *)& privateWakeSequence);
 
+  debug(privateHintSequence);
 }
 
 int64_t RFM69::getPacketTimestamp()
@@ -943,6 +929,7 @@ uint32_t RFM69::readHintSequence()
 void RFM69::loadConnectionFromEEPROM(uint16_t eepromAddr)
 {
 
+  #ifdef E2END
   for (int i = 0; i < (2+32 + 1 + 2 + 1 + 8); i++)
   {
     tmpBuffer[i] = EEPROM.read(eepromAddr + i);
@@ -955,6 +942,8 @@ void RFM69::loadConnectionFromEEPROM(uint16_t eepromAddr)
     setNodeID(tmpBuffer[2+ 32 + 1 + 2]);
     //addEntropy(tmpBuffer + 2+ 32 + 1 + 2 + 1, 8);
   }
+  #endif
+
 }
 
 
@@ -970,6 +959,7 @@ EEPROM Layout:
 */
 void RFM69::saveConnectionToEEPROM(uint16_t addr)
 {
+  #ifdef E2END
   EEPROM.update(addr, 'S');
   EEPROM.update(addr+1, 'G');
  
@@ -989,6 +979,7 @@ void RFM69::saveConnectionToEEPROM(uint16_t addr)
      urandom(&x,1);
      EEPROM.update(addr+2+32+2+1+i,x); 
   }
+  #endif
 }
 
 void RFM69::addEntropy(uint8_t *x, uint8_t len)
@@ -1008,7 +999,7 @@ void RFM69::addEntropy(uint8_t *x, uint8_t len)
   }
 }*/
 
-bool RFM69::listenForPairing(int eepromAddr)
+bool RFM69::listenForPairing(int16_t eepromAddr)
 {
   uint16_t oldChannel = channelNumber;
   uint8_t oldProfile = rfProfile;
@@ -1144,6 +1135,7 @@ uint8_t RFM69::checkHintSequenceRelevance(const uint32_t hint)
 
   return false;
 }
+
 bool RFM69::pairWithRemote(uint8_t nodeID)
 {
 
@@ -1152,8 +1144,7 @@ bool RFM69::pairWithRemote(uint8_t nodeID)
   int8_t oldPowerLevel = _powerLevel;
   bool alreadyExtended = 0;
 
-  //Set to 0 marks that we are done with search phase
-  unsigned long  lastSearch=1;
+
 
   //The pairing channel is always 3
   setProfile(RF_PROFILE_GFSK38K);
@@ -1326,7 +1317,7 @@ bool RFM69::decodeSG1()
       {
         rxPathLoss = txRSSI - _rssi;
 
-        lastSG1Presence = monotonicMillis();
+        lastSG1Presence = approxUnixMillis();
         debug("chb");
 
         //The wake request flag is used to let them wake us up
@@ -1515,7 +1506,7 @@ bool RFM69::decodeSG1()
       memcpy(DATA, tmpBuffer + 3 + 8, remainingDataLen - (3 + 8 + 8));
 
       rxPathLoss = txRSSI - _rssi;
-      lastSG1Presence = monotonicMillis();
+      lastSG1Presence = approxUnixMillis();
       lastSG1Message = lastSG1Presence;
 
       //Remove the hint, IV, and MAC from the length
@@ -1679,7 +1670,7 @@ bool RFM69::decodeSG1()
 
     memcpy(DATA, tmpBuffer, DATALEN - (3 + 4 + 4));
 
-    lastSG1Presence = monotonicMillis();
+    lastSG1Presence = approxUnixMillis();
     lastSG1Message = lastSG1Presence;
 
     //Remove the hint, IV, and MAC from the length
@@ -1711,14 +1702,11 @@ bool RFM69::decodeSG1()
 
   bool RFM69::isRecieving()
   {
-    noInterrupts();
     //If we did not get the
     if ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_RXREADY) == 0x00)
     {
-      interrupts();
       return false;
     }
-    interrupts();
     return true;
   }
 
@@ -1808,7 +1796,7 @@ bool RFM69::decodeSG1()
       _receiveDone();
     }
 
-    lastSentSG1 = monotonicMillis();
+    lastSentSG1 = approxUnixMillis();
     //Don't actually send the length byte
     sendFrame(tmpBuffer + 1, header[0] - 1);
   }
@@ -1818,7 +1806,7 @@ bool RFM69::decodeSG1()
   bool RFM69::checkBeaconSleep()
   {
     //Any recent message indicates we should stay awake.
-    if (lastSG1Message > (monotonicMillis() - 18000L))
+    if (lastSG1Message > (approxUnixMillis() - 18000L))
     {
       //But we always send a beacon anyway.
       sendBeacon();
@@ -1833,7 +1821,7 @@ bool RFM69::decodeSG1()
 
     //So we require resync at 5000 seconds.
 
-    if (lastSG1Message > (monotonicMillis() - 5000000L))
+    if (lastSG1Message > (approxUnixMillis() - 5000000L))
     {
       sendBeacon();
     }
@@ -1853,7 +1841,7 @@ bool RFM69::decodeSG1()
     //Add additional time at slow bitrates.
 
     unsigned long start = micros();
-    while ((micros() - start) < (45000L+(bitTime*600L)))
+    while ((micros() - start) < (45000UL+(bitTime*600UL)))
     {
       //Use the real low power sleep mode.
       //The millis() timer will wake us up because this isn't deep sleep
@@ -1876,7 +1864,6 @@ bool RFM69::decodeSG1()
     return 0;
   }
 
-  static uint16_t bitFlags;
   void RFM69::setChannelKey(unsigned char *key)
   {
     defaultChannel.setChannelKey(key);
@@ -2230,3 +2217,33 @@ bool RFM69::decodeSG1()
     }
     return 0;
   }
+
+
+unsigned long RFM69::getUnixTime32()
+{
+  doTimestamp();
+  return systemTime/1000000L;
+}
+
+
+void RFM69::setUnixTime32(uint32_t time)
+{
+  doTimestamp();
+  noInterrupts();
+  //Watch out, this nonsense takes an entire 
+  int64_t systemTimeSeconds = systemTime/1000000L;
+  interrupts();
+
+  uint32_t time2= time;
+
+
+  //Only take the bottom 4 bytes. This is because we want to correctly
+  //handle 2038 rollover, and the network protocol side of things
+  //supports that even thouth the 32 bit seconds do not
+  memcpy(&systemTimeSeconds, &time2, 4);
+
+  //Convert back to mcroseconds
+  systemTimeSeconds*= 1000000L;
+
+  setTime(systemTimeSeconds);
+}
