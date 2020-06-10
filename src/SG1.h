@@ -421,7 +421,19 @@ class RFM69{
     bool pairWithRemote(uint8_t nodeID);
     bool listenForPairing(int16_t eepromAddress);
 
+
+
+  static void writeUInt16(void * p, uint16_t val);
+  static uint16_t readUInt16(void * p);
+  
+  static void writeUInt32(void * p, uint32_t val);
+  static uint32_t readUInt32(void * p);
+  
+  static void writeInt64(void * p, int64_t val);
+  static int64_t readInt64(void * p);
+
   protected:
+
     static void isr0();
     void interruptHandler();
     static volatile bool _haveData;
@@ -429,6 +441,7 @@ class RFM69{
     bool trySend(const void* buffer, uint8_t bufferSize);
     void getEntropy(uint8_t changes=128);
 
+    bool checkTimestampReplayAttack(int64_t ts);
     void recalcBeaconBytes();
     void doPerPacketTimeFunctions(uint8_t rxTimeTrust);
     void initSystemTime();

@@ -38,8 +38,11 @@
 #include "utility/rweather/EAX.h"
 #include "utility/rweather/Curve25519.h"
 
+#ifdef __AVR__
+#include <avr/io.h>
+#endif
 
-#ifdef defined(E2END) && E2END>0
+#if defined(E2END) && E2END>0
 #include <EEPROM.h>
 #else
 #warning NO EEPROM, SAVING PAIRING WILL NOT WORK
@@ -121,6 +124,48 @@ static union {
 };
 
 
+uint32_t saturatingAbs(int64_t p)
+{
+  uint32_t x = 0;
+
+  uint8_t target;
+  //Topmost bit check ones complement
+  if ((((uint8_t *)&p)[7]) & 128)
+  {
+    target = 255;
+  }
+  else
+  {
+    target =0;
+  }
+
+  //Check that the top 4 bytes are either 0 or 255 depending on if this is a negative or positive
+  //number. If they are anything else it means that the number is using those top
+  //bytes.
+  for(uint8_t i = 4;i<8;i++)
+  {
+    if(  (((uint8_t *)&p)[i]) != target)
+    {
+      debug(i);
+      debug((((uint8_t *)&p)[i]));
+      return 4000000000UL;
+    }
+  }
+
+  //Top bit of byte 3 must be 0 for positive or 1 for negative.
+  //Otherwise, the number would be too big to fig in 32 once we add the sign bit.
+  if (((((uint8_t *)&p)[3]) & 128) != (target&128))
+  {
+    return 4000000000UL;
+  }
+
+  memcpy(&x,&p,4);
+  if(target)
+  {
+    return ~x;
+  }
+  return x;
+}
 unsigned long RFM69::approxUnixMillis()
 {
   return millis()+millisToUnix;
@@ -224,7 +269,7 @@ void doTimestamp(int32_t adjustment = 0)
   //First compute the system time/1024 for approx millis.
   //Now we subtract millis to get a conversion to turn millis into
   //unix millis.
-  millisToUnix = ( ((uint32_t *)(systemTimeBytes+1))[0]>>4)-millis();
+  millisToUnix = ((RFM69::readUInt32(systemTimeBytes+1)  )>>4)-millis();
   //If it has been ten minutes since accurate setting,
   //The clock has drifted and we aren't accurate anymore.
 
@@ -254,7 +299,9 @@ static void mixEntropy()
 {
   //Pick a fairly random arbitrary position to xor the micros into,
   //so that it's separate from the entropyRegister
-  ((uint32_t *)entropyPool)[3] ^= micros();
+  uint8_t m =micros();
+
+  entropyPool[3] ^= m;
   cipherContext.setKey(entropyPool, 20);
   cipherContext.setIV(systemTimeBytes, 8);
   cipherContext.encrypt(entropyPool, entropyPool, 20);
@@ -344,16 +391,16 @@ void RFM69::setTime(int64_t time, uint8_t trust)
   //Special value 0 indicates we randomize the time if needed.
   if (time)
   {
-    noInterrupts();
     systemTime = time;
     systemTimeMicros = micros();
-    interrupts();
   }
   else
   {
     initSystemTime();
   }
-  systemTimeTrust = trust;
+
+   systemTimeTrust = trust;
+
 
 }
 
@@ -447,18 +494,13 @@ retry:
   //It it is important that we use the private hint sequences
   //here not the fixed ones. With fixed, any address collision would be constantly
   //sending bad packets, that would get through fairly reliably ever 2**32 packets.
-  //smallBuffer[0] = ((uint8_t *)&(defaultChannel.privateHintSequence))[0];
-  //smallBuffer[1] = ((uint8_t *)&(defaultChannel.privateHintSequence))[1];
-  //smallBuffer[2] = ((uint8_t *)&(defaultChannel.privateHintSequence))[2];
-
+  
   memcpy(smallBuffer, (uint8_t *)(&(defaultChannel.privateHintSequence)), 3);
 
   doTimestamp();
-  noInterrupts();
 
   //Copy all 8 of the IV bytes, but we only send 4
   memcpy(smallBuffer + 3, systemTimeBytes, 8);
-  interrupts();
 
   //Replace the LSB byte with the node ID.
   smallBuffer[3] = nodeID;
@@ -579,19 +621,14 @@ void RFM69::rawSendSG1(const void *buffer, uint8_t bufferSize,
 
 retry:
   doTimestamp();
-  //smallBuffer[0] = ((uint8_t *)&(defaultChannel.fixedHintSequence))[0];
-  //smallBuffer[1] = ((uint8_t *)&(defaultChannel.fixedHintSequence))[1];
-  //smallBuffer[2] = ((uint8_t *)&(defaultChannel.fixedHintSequence))[2];
 
   memcpy(smallBuffer, (uint8_t *)(&(defaultChannel.fixedHintSequence)), 3);
 
   //First 3 bytes of this are the hint. 4th byte is nodeid part of iv.
   smallBuffer[3] = nodeID;
-  noInterrupts();
   //Hint comes before the IV, and first IV byte is
   //NodeID so don't put the time in that
   memcpy(smallBuffer + 3 + 1, systemTimeBytes + 1, 7);
-  interrupts();
 
   //Skip hint sequence to get to the IV
   cipherContext.setIV(smallBuffer + 3, 8);
@@ -629,7 +666,6 @@ retry:
                           &padByte, 1);
   }
 
-  //memcpy((uint8_t *)smallBuffer+3+8, (uint8_t *)buffer, bufferSize);
   cipherContext.computeTag(smallBuffer + 3 + 8 + bufferSize, 8);
 
   if (useFEC)
@@ -757,17 +793,12 @@ void SG1Channel::recalcBeaconBytes()
 
   //set cache marker. altIntervalNumber is used because that one changes more often.
   intervalNumber = altIntervalNumber;
-  
-  //cipherContext.setKey(channelKey, 32);
-  //cipherContext.setIV(altIV, 8);
 
   setupCipher(altIV);
   encryptIntoSequence((uint8_t *)& altPrivateHintSequence);
   encryptIntoSequence((uint8_t *)& altPrivateWakeSequence);
 
 
-  //cipherContext.setKey(channelKey, 32);
-  //cipherContext.setIV(currentIV, 8);
   setupCipher(currentIV);
   encryptIntoSequence((uint8_t *)& privateHintSequence);
   encryptIntoSequence((uint8_t *)& privateWakeSequence);
@@ -811,13 +842,27 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
   //Check if the absolute value is less than 2000000L
   //I could not get this comparision to work any other way.
   //Note we have to mask off the sign bit to get the abs
-  //I have no clue what the bug was.
-  if ((((((uint32_t *)&diff)[1]) & 0b01111111111111111111111111111111) > 0) || ((((uint32_t *)&diff)[0]) > 2000000UL))
+  //I have no clue what the bug was. 64 bit arithmetic doesn't always seem to work well.
+
+  
+
+
+  
+  //Note!! There is a very small chance of ambiguity!!!! We will sometimes attempt small offsets when
+  //We need a large change due to integer ambiguity.
+  //Which we reduce by manually checking to see that bit 5 is 0
+  if(saturatingAbs(diff)>2000000L)
   {
-    debug("B");
-    debug((int32_t)(diff >> 16));
-    canDoSmallAdjust = false;
+      canDoSmallAdjust = false;
+      debug("s1");
   }
+  else
+  {
+    debug("doadj");
+  }
+
+  //canDoSmallAdjust=false;
+  
 
   //#TODO: This expects that the clock does not get set in between
   //recieve and decode.
@@ -851,6 +896,7 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
     debug("tj");
     debug(canDoSmallAdjust);
     debug((int32_t)diff);
+    debug((int32_t)(diff>>32));
     systemTime = systemTime + diff;
 
     //Yes, this can go backwards. It's somewhat of a nonce reuse hazard.
@@ -923,13 +969,14 @@ uint32_t RFM69::readHintSequence()
     memcpy(x, DATA + 5, 3);
   }
 
-  return applyHintSequenceMask(((uint32_t *)(x))[0]);
+  return applyHintSequenceMask(readUInt32(x));
 }
 
 void RFM69::loadConnectionFromEEPROM(uint16_t eepromAddr)
 {
 
-  #ifdef E2END
+  #if defined(E2END) && E2END>0
+
   for (int i = 0; i < (2+32 + 1 + 2 + 1 + 8); i++)
   {
     tmpBuffer[i] = EEPROM.read(eepromAddr + i);
@@ -938,7 +985,7 @@ void RFM69::loadConnectionFromEEPROM(uint16_t eepromAddr)
   {
     defaultChannel.setChannelKey(tmpBuffer+2);
     setProfile(tmpBuffer[2+32]);
-    setChannelNumber(((uint16_t *)(tmpBuffer + 2+ 32 + 1))[0]);
+    setChannelNumber(readUInt16(tmpBuffer + 2+ 32 + 1));
     setNodeID(tmpBuffer[2+ 32 + 1 + 2]);
     //addEntropy(tmpBuffer + 2+ 32 + 1 + 2 + 1, 8);
   }
@@ -959,7 +1006,7 @@ EEPROM Layout:
 */
 void RFM69::saveConnectionToEEPROM(uint16_t addr)
 {
-  #ifdef E2END
+  #if defined(E2END) && E2END>0
   EEPROM.update(addr, 'S');
   EEPROM.update(addr+1, 'G');
  
@@ -1087,7 +1134,7 @@ bool RFM69::listenForPairing(int16_t eepromAddr)
             {
               defaultChannel.setChannelKey(DATA + 1);
               setProfile(DATA[1 + 32]);
-              setChannelNumber(((uint16_t *)(DATA + 1 + 32+1))[0]);
+              setChannelNumber(readUInt16(DATA + 1 + 32+1));
               setNodeID(DATA[1 + 32 + 1 + 2]);
               setPowerLevel(-127);
 
@@ -1212,7 +1259,7 @@ bool RFM69::pairWithRemote(uint8_t nodeID)
         //Now we just need to send the actual connection parameters.
         memcpy(buf + 1, defaultChannel.channelKey, 32);
         buf[1 + 32] = oldProfile;
-        ((uint16_t *)&(buf[1 + 32 + 1]))[0] = oldChannel;
+        writeUInt16(&(buf[1 + 32 + 1]),oldChannel);
         buf[1 + 32 + 1 + 2] = nodeID;
 
         cipherContext.setKey(secret, 32);
@@ -1237,7 +1284,31 @@ bool RFM69::pairWithRemote(uint8_t nodeID)
   setChannelNumber(oldChannel);
   setPowerLevel(oldPowerLevel);
 }
+bool RFM69::checkTimestampReplayAttack(int64_t ts)
+{
+          int64_t diff = ts - systemTime;
 
+          int32_t diff32 = saturatingAbs(diff);
+          debug("chrpa");
+          debug(diff32);
+
+    
+
+
+          //16 seconds max err
+          if (diff32>16000000L)
+          {
+
+            debug("rtsmp");
+            return false;
+          }
+
+          if (systemTimeTrust < TIMETRUST_CHALLENGERESPONSE)
+          {
+            debug("rlc");
+            return false;
+          }
+}
 
 
   /*
@@ -1393,7 +1464,7 @@ bool RFM69::decodeSG1()
         //Don't bother to send stuff if we don't have a valid clock.
         if (systemTimeTrust >= TIMETRUST_CHALLENGERESPONSE)
         {
-          int64_t diff = getPacketTimestamp() - (rxTime - ((((RAWPAYLOADLEN + 1 + 4) * 8 + 40) * bitTime) + 400LL + 32LL + 8LL));
+          int64_t diff = getPacketTimestamp() - (rxTime);
           //We are going to try to maintain tight timing
           //1100ms is the limit before we tell them. We need the tight sync
           //for FHSS, so use 5ms when that is enabled.
@@ -1417,11 +1488,16 @@ bool RFM69::decodeSG1()
             {
               //Don't send replies if they actually requested one, leave that to
               //application code.
-              //However, should the packet be more than 5s off, we can't pass this to application
-              //code anyway, so there can be no legit reply.
+              //However, should the packet be too far off, we can't pass this to application
+              //code anyway, so there can be no legit reply.  Try to send a little before it gets that bad
+              //also.
               if (((rxHeader[1] & HEADER_TYPE_FIELD) == HEADER_TYPE_UNRELIABLE) ||
                   ((rxHeader[1] & HEADER_TYPE_FIELD) == HEADER_TYPE_RELIABLE_SPECIAL) ||
-                  (abs(diff) > (5000000LL)))
+                  
+                  //We don't seem to be able to do 64 bit compares, but we can do
+                  //do 32 bits, and check byte 4 and 5 manually f
+                  (saturatingAbs(diff)>12000000L)
+                  )
               {
                 ///the reason we can do this automatically without corrupting state is
                 //Replies can't be replied to, so sending this won't overwrite the value that
@@ -1451,22 +1527,8 @@ bool RFM69::decodeSG1()
             return false;
           }
 
-          //5 seconds max err
-          if (getPacketTimestamp() >= (systemTime + 5000000LL))
+          if(!checkTimestampReplayAttack(getPacketTimestamp()))
           {
-
-            debug("rtn");
-            return false;
-          }
-
-          if (getPacketTimestamp() <= (systemTime - 5000000LL))
-          {
-            debug("Rr2o");
-            return false;
-          }
-          if (systemTimeTrust < TIMETRUST_CHALLENGERESPONSE)
-          {
-            debug("rlc");
             return false;
           }
         }
@@ -1571,33 +1633,23 @@ bool RFM69::decodeSG1()
 
   uint32_t RFM69::readHintSequence(uint8_t * x)
   {
-    uint32_t rxHintSequence = ((uint32_t *)(x))[0];
+    uint32_t rxHintSequence = readUInt32(x);
     rxHintSequence = applyHintSequenceMask (rxHintSequence);
     return rxHintSequence;
   }
 
-  // uint8_t RFM69::readHintSequenceFlags(uint8_t * x)
-  // {
-  //   uint32_t rxHintSequence = ((uint32_t *)(x))[0];
-  //   rxHintSequence = rxHintSequence >>20;
-  //   return rxHintSequence;
-  // }
-  /*
-  Attempt to decode the packet as an SG1RT message.
-  These use 9 bytes less data and are much simpler
-*/
   bool RFM69::decodeSG1RT()
   {
+    debug("DECODING");
+
     int8_t _rssi = RSSI;
     gotSpecialPacket = false;
     RAWPAYLOADLEN = DATALEN;
 
     doTimestamp();
-    noInterrupts();
     //We need to use the 4 most significant bytes from the clock to recover the
     //IV, since they weren't explicitly sent.
     memcpy(rxIV, systemTimeBytes, 8);
-    interrupts();
 
     //Buffer overflow prevention
     if (DATALEN > 80)
@@ -1625,32 +1677,17 @@ bool RFM69::decodeSG1()
     //with the implied 4.
     memcpy(rxIV, DATA + 3, 4);
 
+
     //We still do the replay protection for this.
     if (replayProtection)
     {
-      if (getPacketTimestamp() <= channelTimestampHead)
-      {
-        debug("Rotl");
-        return false;
-      }
+      uint64_t rxTimestamp;
 
-      //5 seconds max err
-      if (getPacketTimestamp() >= (systemTime + 5000000LL))
+      //The 0 byte of the IV is actualy the node ID at this point
+      //That doesn't matter since we don't need submillisecond accuracy
+      memcpy(&rxTimestamp,rxIV,8);
+      if(!checkTimestampReplayAttack(rxTimestamp))
       {
-
-        debug("rtn");
-        debug((int32_t)((getPacketTimestamp() - systemTime) / 1000000L));
-        return false;
-      }
-
-      if (getPacketTimestamp() <= (systemTime - 5000000LL))
-      {
-        debug("Rr2o");
-        return false;
-      }
-      if (systemTimeTrust < TIMETRUST_CHALLENGERESPONSE)
-      {
-        debug("rlc");
         return false;
       }
     }
@@ -1663,7 +1700,7 @@ bool RFM69::decodeSG1()
 
     if (!cipherContext.checkTag(DATA + (DATALEN - 4), 4))
     {
-      debug("rbc");
+      debug("rbcrt");
       debug(DATALEN);
       return false;
     }
@@ -2183,7 +2220,7 @@ bool RFM69::decodeSG1()
   bool RFM69::receivedReply()
   {
     //We zero it out when we got a reply, so we can use this to check
-    return ((uint64_t *)awaitReplyToIv)[0] == 0;
+    return memset(awaitReplyToIv,0,8);
   }
 
   bool RFM69::isReply()
@@ -2229,10 +2266,8 @@ unsigned long RFM69::getUnixTime32()
 void RFM69::setUnixTime32(uint32_t time)
 {
   doTimestamp();
-  noInterrupts();
   //Watch out, this nonsense takes an entire 
   int64_t systemTimeSeconds = systemTime/1000000L;
-  interrupts();
 
   uint32_t time2= time;
 
@@ -2247,3 +2282,50 @@ void RFM69::setUnixTime32(uint32_t time)
 
   setTime(systemTimeSeconds);
 }
+
+
+
+int64_t RFM69::readInt64(void * p)
+{
+  int64_t rVal;
+  memcpy(&rVal,p,8);
+  return rVal;
+}
+
+void RFM69::writeInt64(void * p, int64_t val)
+{
+  memcpy(p,&val,8);
+}
+
+
+void RFM69::writeUInt32(void * p, uint32_t val)
+{
+  memcpy(p,&val,4);
+}
+
+
+uint32_t RFM69::readUInt32(void * p)
+{
+  uint32_t rVal;
+  memcpy(&rVal,p,4);
+  return rVal;
+}
+
+
+void RFM69::writeUInt16(void * p, uint16_t val)
+{
+  memcpy(p,&val,2);
+}
+
+
+uint16_t RFM69::readUInt16(void * p)
+{
+  uint32_t rVal;
+  memcpy(&rVal,p,2);
+  return rVal;
+}
+
+
+
+
+

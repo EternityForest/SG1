@@ -11,6 +11,10 @@
 
 
 
+#define SERWRITE(x) Serial.write((uint8_t)(x))
+#define SERWRITEN(x,y) Serial.write((uint8_t *)(x),y)
+
+
 
 
 #define AWAIT_START 0
@@ -113,11 +117,17 @@ NanoframeParser parser;
 
 
 
+#if !defined(__AVR__)
+RFM69 radio(8,3,true);
+#else
+sdxfcvgbn
 
 RFM69 radio;
+#endif
 
 
 
+const char VERSION = 0;
 
 unsigned long last = 0;
 uint8_t attempts = 10;
@@ -140,17 +150,19 @@ uint8_t tmp[129];
 #define MSG_SENDRT 14
 #define MSG_PAIR 15
 
+#define MSG_VERSION 16
+#define MSG_HW_FAIL 17
 
 bool listening = 0;
 
 
 void nfSend(char cmd, uint8_t *d, uint8_t len)
 {
-  Serial.write(42);
-  Serial.write(len + 1);
-  Serial.write(cmd);
-  Serial.write(d, len);
-  Serial.write(43);
+  SERWRITE(42);
+  SERWRITE(len + 1);
+  SERWRITE(cmd);
+  SERWRITEN(d, len);
+  SERWRITE(43);
 }
 
 
@@ -159,12 +171,9 @@ uint8_t alreadyDecoded = 0;
 void callback(byte command, byte *payload, byte length) {
   /* Make use of the payload before sending something, the buffer where payload points to is
      overwritten when a new message is dispatched */
-
-   
-
   switch (command) {
     case MSG_SET_KEY:
-      radio.setChannelKey(payload + 1);
+      radio.setChannelKey(payload);
       break;
 
     case MSG_DECODE:
@@ -188,26 +197,35 @@ void callback(byte command, byte *payload, byte length) {
       if(radio.decodeSG1RT())
       {
         alreadyDecoded = 1;
-        Serial.write(42);
-        Serial.write(radio.DATALEN + 32+ 1+1);
-        Serial.write(MSG_DECODEDRT);
-        Serial.write(radio.RSSI);
+        SERWRITE(42);
+        SERWRITE(radio.DATALEN + 32+ 1+1);
+        SERWRITE(MSG_DECODEDRT);
+        SERWRITE(radio.RSSI);
 
-        Serial.write(radio.defaultChannel.channelKey, 32);
-        Serial.write(radio.DATA, 32);
-        Serial.write(43);
+        SERWRITEN(radio.defaultChannel.channelKey, 32);
+        SERWRITEN(radio.DATA, (radio.DATALEN));
+        SERWRITE(43);
       }
       else if (radio.decodeSG1())
       {
         alreadyDecoded = 1;
-        Serial.write(42);
-        Serial.write(radio.DATALEN + 32+ 1+1);
-        Serial.write(MSG_DECODED);
-        Serial.write(radio.rxPathLoss);
-        Serial.write(radio.RSSI);
-        Serial.write(radio.defaultChannel.channelKey, 32);
-        Serial.write(radio.DATA, 32);
-        Serial.write(43);
+        SERWRITE(42);
+        SERWRITE(1+1+1+ 8+ 4+ 32+ radio.DATALEN);
+        SERWRITE(MSG_DECODED);
+        SERWRITE(radio.rxPathLoss);
+        SERWRITE(radio.RSSI);
+        SERWRITEN(radio.rxIV,8);
+
+        // Reserved padding bytes.
+        SERWRITE(0);
+        SERWRITE(0);
+        SERWRITE(0);
+        SERWRITE(0);
+
+        
+        SERWRITEN(radio.defaultChannel.channelKey, 32);
+        SERWRITEN(radio.DATA, (radio.DATALEN));
+        SERWRITE(43);
       }
    
       listening = 1;
@@ -239,15 +257,13 @@ void callback(byte command, byte *payload, byte length) {
       break;
 
     case MSG_TIME:
-      Serial.println("timecmd");
-      Serial.println(length);
       if (length)
       {
-        radio.setTime( ((uint64_t *)payload)[0], TIMETRUST_SECURE | TIMETRUST_CHALLENGERESPONSE | TIMETRUST_CLAIM_TRUST | TIMETRUST_LOCAL);
+        radio.setTime( radio.readInt64(payload), TIMETRUST_SECURE | TIMETRUST_CHALLENGERESPONSE | TIMETRUST_CLAIM_TRUST | TIMETRUST_LOCAL);
       }
       else
       {
-        ((uint64_t *)tmp)[0] = radio.unixMicros();
+        radio.writeInt64(tmp, radio.unixMicros());
         nfSend(MSG_TIME, tmp, 8);
       }
       break;
@@ -259,7 +275,6 @@ void callback(byte command, byte *payload, byte length) {
       break;
 
     case MSG_PAIR:
-      Serial.println("PAIR");
       //Payload contains the node ID we want to give the remote.
       radio.pairWithRemote(payload[1]);
       break;
@@ -271,22 +286,47 @@ void setup()
 {
   Serial.begin(250000);
   parser.callback = &callback;
-  radio.initialize(FREQUENCY);
-  Serial.println("Init");
+  Serial.println("SG1 GATEWAY");
+  if(radio.initialize(FREQUENCY)==false)
+  {
+    Serial.println("RADIO CONNECT FAIL");
+    while(1){
+      nfSend(MSG_HW_FAIL, 0, 0);
+      Serial.println("FAILURE");
+      delay(100);
+      while(Serial.available())
+      {
+        Serial.read();
+      }
+    }
+  }
   radio.setProfile(RF_PROFILE_GFSK250K);
-  Serial.println("prof");
   radio.setChannelNumber(150);
   radio.setPowerLevel(-127);
   radio.setNodeID(NODEID_HUB);
   radio.setTime(null);
-  Serial.println("time");
+  Serial.println("BOOTED");
 }
 
 
 byte smallBuf[8];
 
+unsigned long lastSentVersion;
+
 void loop()
 {
+
+  if(millis()-lastSentVersion >1000)
+  {
+    lastSentVersion=millis();
+    smallBuf[0] = 'S';
+    smallBuf[1] = 'G';
+    smallBuf[2] = '1';
+    smallBuf[3] = VERSION;
+    nfSend(MSG_VERSION,smallBuf, 4);
+
+    Serial.println("SG1");
+  }
   // RECEIVING
   // In this section, we'll check with the RFM69HCW to see
   // if it has received any packets:
@@ -301,28 +341,31 @@ void loop()
       //polling it.
       listening = 0;
       
-      memset(smallBuf,0,6);
+      memset(smallBuf,0,7);
       
       smallBuf[0] = radio.RSSI;
+      
+      memcpy(smallBuf+1,radio.DATA,3);
       
 
       if (radio.decodeSG1Header())
       {
-        Serial.println("Header");
         ((uint32_t *)(smallBuf+4))[0] = radio.readHintSequence();
       }
 
-      
-      memcpy(smallBuf+1,radio.DATA,3);
+  
 
-      //Send format: RSSI DecodedHint, RawHint
+      //Send format: RSSI, RawHint, decodedhint
       //Reciever has to check bothe to see if they make sense
+
       nfSend(MSG_NEWDATA, smallBuf, 7);
-      
+
 
       //RF needs to be physically listening, but we don't actually
       //do anything with that data until we're done handling the current packet
+
       radio._receiveDone();
+
     }
   }
 

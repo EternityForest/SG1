@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
+
 
 /* $Id$
  *
@@ -261,20 +263,24 @@ int32_t golay_decode(uint32_t w)
 void golay_block_encode(uint8_t * in, uint8_t * out)
 {
     //First 12 bits
-    uint16_t temp_in = *((uint16_t *)in);
+    uint16_t temp_in; //= *((uint16_t *)in);
+    memcpy(&temp_in,in,2);
+    
     temp_in &= 0b111111111111;
 
 
     uint32_t temp = golay_encode(temp_in);
 
-    out[0]= ((uint8_t *)(&temp))[0];
-    out[1]= ((uint8_t *)(&temp))[1];
-    out[2]= ((uint8_t *)(&temp))[2];
+    //out[0]= ((uint8_t *)(&temp))[0];
+    //out[1]= ((uint8_t *)(&temp))[1];
+    //out[2]= ((uint8_t *)(&temp))[2];
 
+    memcpy(out, &temp, 3);
 
 
     //Next 12 bits
-    temp_in = *((uint16_t *)(in+1));
+    //temp_in = *((uint16_t *)(in+1));
+    memcpy(&temp_in, in+1, 2);
     //All 12-8 = 4, so skip the 4 bits that extended into the next 2
     temp_in = temp_in>>4;
     //Not sure this is needed
@@ -284,9 +290,11 @@ void golay_block_encode(uint8_t * in, uint8_t * out)
 
 
 
-    out[3]= ((uint8_t *)(&temp))[0];
-    out[4]= ((uint8_t *)(&temp))[1];
-    out[5]= ((uint8_t *)(&temp))[2];
+    // out[3]= ((uint8_t *)(&temp))[0];
+    // out[4]= ((uint8_t *)(&temp))[1];
+    // out[5]= ((uint8_t *)(&temp))[2];
+
+    memcpy(out+3, &temp,3);
 }
 
 //6 bytes into 3 bytes
@@ -294,7 +302,9 @@ bool golay_block_decode(uint8_t * in, uint8_t * out)
 {
     //First 24 input bits
     bool fail=false;
-    uint32_t temp_in = ((uint32_t *)in)[0];
+    uint32_t temp_in;// = ((uint32_t *)in)[0];
+    memcpy(&temp_in, in, 4);
+
     temp_in &= 0b111111111111111111111111;
     int32_t temp = golay_decode(temp_in);
     if(temp==-1)
@@ -303,7 +313,9 @@ bool golay_block_decode(uint8_t * in, uint8_t * out)
     }
 
 
-    temp_in = ((uint32_t *)(in+3))[0];
+    //temp_in = ((uint32_t *)(in+3))[0];
+    memcpy(&temp_in, in+3, 4);
+
     temp_in &= 0b111111111111111111111111;
 
     temp |= (golay_decode(temp_in)<<12);
@@ -313,8 +325,9 @@ bool golay_block_decode(uint8_t * in, uint8_t * out)
     }
 
 
-    out[0]= ((uint8_t *)(&temp))[0];
-    out[1]= ((uint8_t *)(&temp))[1];
-    out[2]= ((uint8_t *)(&temp))[2];
+    //out[0]= ((uint8_t *)(&temp))[0];
+    //out[1]= ((uint8_t *)(&temp))[1];
+    //out[2]= ((uint8_t *)(&temp))[2];
+    memcpy(out,&temp,3);
     return fail;
 }

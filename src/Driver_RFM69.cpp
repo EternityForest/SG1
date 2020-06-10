@@ -148,7 +148,7 @@ bool RFM69::initialize(uint8_t freqBand)
   debug(2);
   setMode(RF69_MODE_STANDBY);
   setProfile(RF_PROFILE_GFSK250K);
-  
+  debug(3);
 
   return true;
 }
@@ -190,7 +190,7 @@ void RFM69::setMode(uint8_t newMode)
   switch (newMode) {
     case RF69_MODE_TX:
       writeReg(REG_OPMODE, (readReg(REG_OPMODE) & 0xE3) | RF_OPMODE_TRANSMITTER);
-      if (_isRFM69HW) setHighPowerRegs(true);
+      if (_isRFM69HW) setHighPowerRegs(false);
       break;
     case RF69_MODE_RX:
       writeReg(REG_OPMODE, (readReg(REG_OPMODE) & 0xE3) | RF_OPMODE_RECEIVER);
@@ -250,11 +250,10 @@ void RFM69::rawSetPowerLevel(int8_t powerLevel)
 {
   if(_isRFM69HW)
   {
-    powerLevel=min(20,powerLevel);
-    powerLevel=max(5,powerLevel);
+    powerLevel=min(17,powerLevel);
+    powerLevel=max(2,powerLevel);
 
-    //5db is the lowest
-    powerLevel-=5;
+    powerLevel+=14;
   }
   else
   {
@@ -574,10 +573,29 @@ void RFM69::setHighPower(bool onOff) {
   _isRFM69HW = onOff;
   writeReg(REG_OCP, _isRFM69HW ? RF_OCP_OFF : RF_OCP_ON);
   if (_isRFM69HW) // turning ON
+
+    //Max 13dbm, min -2dbm, we aren't using the full high power mode
     writeReg(REG_PALEVEL, (readReg(REG_PALEVEL) & 0x1F) | RF_PALEVEL_PA1_ON | RF_PALEVEL_PA2_ON); // enable P1 & P2 amplifier stages
   else
     writeReg(REG_PALEVEL, RF_PALEVEL_PA0_ON | RF_PALEVEL_PA1_OFF | RF_PALEVEL_PA2_OFF | _powerLevel); // enable P0 only
 }
+
+
+//Had very low power outout even on hcw, possible way to send less power than the datasheet suggests?
+/*
+// for RFM69HW only: you must call setHighPower(true) after initialize() or else transmission won't work
+void RFM69::setHighPower(bool onOff) {
+  _isRFM69HW = onOff;
+  writeReg(REG_OCP, _isRFM69HW ? RF_OCP_OFF : RF_OCP_ON);
+  if (_isRFM69HW) // turning ON
+
+    //Max 13dbm, min -2dbm, we aren't using the full high power mode
+    writeReg(REG_PALEVEL, (readReg(REG_PALEVEL) & 0x1F) | RF_PALEVEL_PA1_ON | RF_PALEVEL_PA2_OFF); // enable P1 & P2 amplifier stages
+  else
+    writeReg(REG_PALEVEL, RF_PALEVEL_PA0_ON | RF_PALEVEL_PA1_OFF | RF_PALEVEL_PA2_OFF | _powerLevel); // enable P0 only
+}
+*/
+
 
 // internal function
 void RFM69::setHighPowerRegs(bool onOff) {

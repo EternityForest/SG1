@@ -24,8 +24,12 @@
 
 // Create a library object for our RFM69HCW module:
 
-RFM69 radio;
 
+#if !defined(__AVR__)
+RFM69 radio(8,3,true);
+#else
+RFM69 radio;
+#endif
 
 char * key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 void setup()
@@ -39,7 +43,14 @@ void setup()
 
   // Initialize the RFM69HCW:
   // radio.setCS(10);  //uncomment this if using Pro Micro
-  radio.initialize(FREQUENCY);
+  if(radio.initialize(FREQUENCY)==false)
+  {
+    while(1)
+    {
+      Serial.println("RADIO FAIL");
+      delay(1000);
+    }
+  }
 
 
   //RX filter bandwidth and deviation are automatically set
@@ -48,7 +59,7 @@ void setup()
 
   //This channel number determines the actual RF frequency. Set it to anything you
   //Want, the library knows how to wrap around if you go over the top channel.
-  radio.setChannelNumber(150);
+  radio.setChannelNumber(3);
 
   //Manual, use -127 to set automatic.
   radio.setPowerLevel(-127);
