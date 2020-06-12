@@ -146,8 +146,6 @@ uint32_t saturatingAbs(int64_t p)
   {
     if(  (((uint8_t *)&p)[i]) != target)
     {
-      debug(i);
-      debug((((uint8_t *)&p)[i]));
       return 4000000000UL;
     }
   }
@@ -1464,7 +1462,7 @@ bool RFM69::decodeSG1()
         //Don't bother to send stuff if we don't have a valid clock.
         if (systemTimeTrust >= TIMETRUST_CHALLENGERESPONSE)
         {
-          int64_t diff = getPacketTimestamp() - (rxTime);
+          int32_t diff = saturatingAbs(getPacketTimestamp() - (rxTime));
           //We are going to try to maintain tight timing
           //1100ms is the limit before we tell them. We need the tight sync
           //for FHSS, so use 5ms when that is enabled.
@@ -1473,6 +1471,10 @@ bool RFM69::decodeSG1()
           //For now, we are just going to automatically reply to all these
           //RELIABLE_SPECIAL with the current time.
           //Todo??
+          debug("ofset");
+          debug((int32_t)(diff));
+
+
           if (((abs(diff) > (5000LL)) && (!isReply())) ||
               ((rxHeader[1] & HEADER_TYPE_FIELD) == HEADER_TYPE_RELIABLE_SPECIAL))
           {
@@ -1483,7 +1485,7 @@ bool RFM69::decodeSG1()
             //without wasting too much
 
             //We also *always* reply to reliable special packets.
-            if ((channelNumber > 1000L) || ((abs(diff) > (1100000LL) || (systemTimeBytes[0] < 32))) ||
+            if (((abs(diff) > (1100000LL) || (systemTimeBytes[0] < 16))) ||
                 (rxHeader[1] & HEADER_TYPE_FIELD) == HEADER_TYPE_RELIABLE_SPECIAL)
             {
               //Don't send replies if they actually requested one, leave that to
@@ -1502,8 +1504,7 @@ bool RFM69::decodeSG1()
                 ///the reason we can do this automatically without corrupting state is
                 //Replies can't be replied to, so sending this won't overwrite the value that
                 //Says what we are watching for, if we were watching for something
-                debug("ofset");
-                debug((int32_t)(diff));
+                debug("sndar");
                 int8_t oldpwr = _powerLevel;
                 //Autoreplies to very close and not yet conneted devices
                 //still need auto tx power control to not overload the reciever,
