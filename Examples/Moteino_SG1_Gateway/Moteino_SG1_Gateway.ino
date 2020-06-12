@@ -324,8 +324,6 @@ void loop()
     smallBuf[2] = '1';
     smallBuf[3] = VERSION;
     nfSend(MSG_VERSION,smallBuf, 4);
-
-    Serial.println("SG1");
   }
   // RECEIVING
   // In this section, we'll check with the RFM69HCW to see
