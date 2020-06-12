@@ -846,9 +846,6 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
 
 
   
-  //Note!! There is a very small chance of ambiguity!!!! We will sometimes attempt small offsets when
-  //We need a large change due to integer ambiguity.
-  //Which we reduce by manually checking to see that bit 5 is 0
   if(saturatingAbs(diff)>2000000L)
   {
       canDoSmallAdjust = false;
@@ -1167,13 +1164,14 @@ bool RFM69::listenForPairing(int16_t eepromAddr)
 uint8_t RFM69::checkHintSequenceRelevance(const uint32_t hint)
 {
   if ((hint == defaultChannel.fixedHintSequence) ||
-      (hint == defaultChannel.privateHintSequence))
+      (hint == defaultChannel.privateHintSequence) ||
+      (hint == defaultChannel.altPrivateHintSequence))
   {
     return HINT_TYPE_NORMAL;
   }
 
   if ((hint == defaultChannel.privateWakeSequence) ||
-      (hint == defaultChannel.altPrivateHintSequence))
+      (hint == defaultChannel.altPrivateWakeSequence))
   {
     return HINT_TYPE_WAKE;
   }
@@ -1306,6 +1304,8 @@ bool RFM69::checkTimestampReplayAttack(int64_t ts)
             debug("rlc");
             return false;
           }
+
+          return true;
 }
 
 
