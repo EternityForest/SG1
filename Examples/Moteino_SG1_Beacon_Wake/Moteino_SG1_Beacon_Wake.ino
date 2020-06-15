@@ -47,7 +47,7 @@ void setup()
 
   //This channel number determines the actual RF frequency. Set it to anything you
   //Want, the library knows how to wrap around if you go over the top channel.
-  radio.setChannelNumber(150);
+  radio.setChannelNumber(3);
 
   //Manual, use -127 to set automatic.
   radio.setPowerLevel(-127);
@@ -82,16 +82,25 @@ void loop()
 {
   if(millis()-l>1000)
   {
-        Serial.println((int32_t)(radio.unixMicros()/1000000LL));
-        l=millis();
+      Serial.println((int32_t)(radio.unixMicros()/1000000LL));
+      l=millis();
   }
+
+  uint8_t r = radio.receiveDone();
   
-  if(radio.receiveDone())
+  if(r==1)
   {
     Serial.println(radio.RSSI);
+    //This auto responds to grossly incorect timestamps, to keep in sync.
     if(radio.decodeSG1())
     {
       Serial.println((char *)radio.DATA);
     }
+  }
+  else if(r==2)
+  {
+     Serial.println(radio.RSSI);
+     Serial.println("<BEACON>");
+    
   }
 }

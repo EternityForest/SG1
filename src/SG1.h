@@ -238,7 +238,7 @@ class RFM69{
 
     uint8_t DATA[RF69_MAX_DATA_LEN+1]; // RX/TX payload buffer, including end of string NULL char
     uint8_t DATALEN;
-    uint8_t PAYLOADLEN;
+    uint8_t PAYLOADLEN=0;
     uint8_t RAWPAYLOADLEN;
 
     int8_t RSSI = -127; // most accurate RSSI during reception (closest to the reception). RSSI of last packet.
@@ -315,7 +315,7 @@ class RFM69{
     void setNetwork(uint8_t networkID);
     
     bool decodeSG1Header();
-    bool decodeSG1();
+    uint8_t decodeSG1();
     int64_t getPacketTimestamp();
 
     uint32_t readHintSequence();
@@ -456,7 +456,7 @@ class RFM69{
 
 
     //Check against all the hint sequences we're looking for
-    uint8_t checkHintSequenceRelevance(uint32_t);
+    uint8_t checkHintSequenceRelevance(uint32_t,uint8_t);
 
     //Reads a byte array into a 20 bit number
     static uint32_t readHintSequence(uint8_t *);

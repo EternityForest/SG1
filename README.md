@@ -105,8 +105,10 @@ The first time you do this, the internal entropy pool gets encrypted with the ke
 ### radio.receiveDone()
 If we are recieving, return true and go to standby  got a packet. If not, start recieving.
 
-### radio.decodeSG1()
-Call after getting a packet. Returns true if message was a real SG1 encoded message on our channel key, and decodes the actual payload into data and datalen.
+### uint8_t radio.decodeSG1()
+Call after getting a packet. Returns 1 if message was a real SG1 encoded message on our channel key, and decodes the actual payload into DATA and DATALEN.
+
+If the message was a short beacon frame, returns 2. Note that beacon frames are not completely reliable, expect 1 false positive in 10 minutes if someone is hammering random packets of the right length at max rate.
 
 Returns false for beacons and system traffic.
 
@@ -230,9 +232,21 @@ millis() time of the last full packet or beacon we were able to recieve.
 
 ### radio.sendBeacon(wakeUp=false)
 Send a beacon immediately. If wakeup is true, sends a wake beacon telling
-other nodes to wake up.
+other nodes to wake up briefly.  decodeSG1 will automatically detect and reply to beacon
+frames with another beacon.
 
-Beacons on the current channel are recieved as if they are 0 byte packets.
+Note that beacons are not secure, and wake beacons are only semi-secure.  If someone sends
+random beacons constantly, you can expect false positives every ten minutes, which could even
+happen accidentally, and as such they can only detect the absence of a device, but not securely confim it's presence.
+
+Wake beacons are harder to forge as devices will typically only listen for brief intervals,
+preventing battery attacks.
+
+
+Beacons on the current channel are recieved as if they are 0 byte packets, and they are also
+used to calibrate RSSI. They do not carry any timing information, and due to the rolling code, they cannot be identified if the sender and reciever's clocks are not synchronized to within 16 seconds. 
+
+It is suggested that devices send one periodically if they have no data to send.
 
 
 ### radio.xorshift32()

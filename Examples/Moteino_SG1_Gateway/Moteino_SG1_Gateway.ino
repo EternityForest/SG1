@@ -120,7 +120,6 @@ NanoframeParser parser;
 #if !defined(__AVR__)
 RFM69 radio(8,3,true);
 #else
-sdxfcvgbn
 
 RFM69 radio;
 #endif
@@ -152,6 +151,8 @@ uint8_t tmp[129];
 
 #define MSG_VERSION 16
 #define MSG_HW_FAIL 17
+#define MSG_DECODEDBEACON 18
+#define MSG_LATENCYTEST 19
 
 bool listening = 0;
 
@@ -183,7 +184,7 @@ void callback(byte command, byte *payload, byte length) {
         break;
       }
       
-      if(payload[1]&1)
+      if(payload[0]&1)
       {
         radio.keepRemotesAwake = 1;
       }
@@ -198,42 +199,79 @@ void callback(byte command, byte *payload, byte length) {
       {
         alreadyDecoded = 1;
         SERWRITE(42);
-        SERWRITE(radio.DATALEN + 32+ 1+1);
+        SERWRITE(1+ 1+ 8+ 4 + 32 + radio.DATALEN);
         SERWRITE(MSG_DECODEDRT);
-        SERWRITE(radio.RSSI);
-
-        SERWRITEN(radio.defaultChannel.channelKey, 32);
-        SERWRITEN(radio.DATA, (radio.DATALEN));
-        SERWRITE(43);
-      }
-      else if (radio.decodeSG1())
-      {
-        alreadyDecoded = 1;
-        SERWRITE(42);
-        SERWRITE(1+1+1+ 8+ 4+ 32+ radio.DATALEN);
-        SERWRITE(MSG_DECODED);
-        SERWRITE(radio.rxPathLoss);
         SERWRITE(radio.RSSI);
         SERWRITEN(radio.rxIV,8);
 
-        // Reserved padding bytes.
+        // 4 reserved padding bytes
         SERWRITE(0);
         SERWRITE(0);
         SERWRITE(0);
         SERWRITE(0);
 
-        
         SERWRITEN(radio.defaultChannel.channelKey, 32);
         SERWRITEN(radio.DATA, (radio.DATALEN));
         SERWRITE(43);
       }
+      else
+      {
+
+        uint8_t result = radio.decodeSG1();
+
+        if (result==1)
+        {
+          alreadyDecoded = 1;
+          SERWRITE(42);
+          SERWRITE(1+1+1+ 8+ 4+ 32+ radio.DATALEN);
+          SERWRITE(MSG_DECODED);
+          SERWRITE(radio.rxPathLoss);
+          SERWRITE(radio.RSSI);
+          SERWRITEN(radio.rxIV,8);
+  
+          // Reserved padding bytes.
+          SERWRITE(0);
+          SERWRITE(0);
+          SERWRITE(0);
+          SERWRITE(0);
+  
+          
+          SERWRITEN(radio.defaultChannel.channelKey, 32);
+          SERWRITEN(radio.DATA, (radio.DATALEN));
+          SERWRITE(43);
+        }
+        //Handle beacons separately.
+        else if(result == 2)
+        {
+          alreadyDecoded = 1;
+          SERWRITE(42);
+          SERWRITE(1+1+1+ 4+32);
+          SERWRITE(MSG_DECODEDBEACON);
+          SERWRITE(radio.rxPathLoss);
+          SERWRITE(radio.RSSI);  
+          // Reserved padding bytes.
+          SERWRITE(0);
+          SERWRITE(0);
+          SERWRITE(0);
+          SERWRITE(0);
+  
+          SERWRITEN(radio.defaultChannel.channelKey, 32);
+          SERWRITE(43);
+        }
+
+        
+      }
    
       listening = 1;
+      //Don't just leave that flag set and waste battery
+      radio.keepRemotesAwake=0;
       break;
 
     case MSG_SEND:
       radio.setPowerLevel((int8_t)(payload[0]));
-      radio.sendSG1(payload + 1, length - 1);
+      //3 reserved bytes here
+
+      radio.sendSG1(payload + 4, length - 4);
       nfSend(MSG_SENT, 0, 0);
       break;
 
@@ -270,13 +308,18 @@ void callback(byte command, byte *payload, byte length) {
 
     case MSG_SENDRT:
       radio.setPowerLevel((int8_t)(payload[0]));
-      radio.sendSG1RT(payload + 1, length - 1);
+      //3 reserved bytes here
+      radio.sendSG1RT(payload + 4, length - 4);
       nfSend(MSG_SENT, 0, 0);
       break;
 
     case MSG_PAIR:
       //Payload contains the node ID we want to give the remote.
       radio.pairWithRemote(payload[1]);
+      break;
+
+   case MSG_LATENCYTEST:
+      nfSend(MSG_LATENCYTEST,0,0);
       break;
 
   }

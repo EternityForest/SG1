@@ -199,7 +199,7 @@ void RFM69::initSystemTime()
 
 void RFM69::syncFHSS(uint16_t attempts)
 {
-  fhssOffset = xorshift16();
+  //fhssOffset = xorshift16();
 
   for (uint16_t i = 0; i < attempts; i++)
   {
@@ -232,6 +232,8 @@ void RFM69::syncFHSS(uint16_t attempts)
   fhssOffset = 0;
 }
 static unsigned long systemTimeMicros = 0;
+
+
 
 void doTimestamp(int32_t adjustment = 0)
 {
@@ -772,7 +774,7 @@ void SG1Channel::recalcBeaconBytes()
     uint32_t altIntervalNumber;
     uint8_t altIV[8];
   };
-  memset(currentIV,0,8);
+  memset(altIV,0,8);
   altIntervalNumber = timeToIntervalNumber(systemTime + 8000000L);
 
   //So we tried incrementing, but it didn't change, meaning
@@ -801,7 +803,6 @@ void SG1Channel::recalcBeaconBytes()
   encryptIntoSequence((uint8_t *)& privateHintSequence);
   encryptIntoSequence((uint8_t *)& privateWakeSequence);
 
-  debug(privateHintSequence);
 }
 
 int64_t RFM69::getPacketTimestamp()
@@ -1161,16 +1162,26 @@ bool RFM69::listenForPairing(int16_t eepromAddr)
 
 #define HINT_TYPE_NORMAL 1
 #define HINT_TYPE_WAKE 2
-uint8_t RFM69::checkHintSequenceRelevance(const uint32_t hint)
+uint8_t RFM69::checkHintSequenceRelevance(const uint32_t hint, const uint8_t privateOnly)
 {
-  if ((hint == defaultChannel.fixedHintSequence) ||
+
+  if(hint == defaultChannel.fixedHintSequence)
+  {
+    if (privateOnly)
+    {
+      return 0;
+    }
+    return HINT_TYPE_NORMAL;
+  }
+  else if (
       (hint == defaultChannel.privateHintSequence) ||
-      (hint == defaultChannel.altPrivateHintSequence))
+      (hint == defaultChannel.altPrivateHintSequence)
+      )
   {
     return HINT_TYPE_NORMAL;
   }
 
-  if ((hint == defaultChannel.privateWakeSequence) ||
+  else if ((hint == defaultChannel.privateWakeSequence) ||
       (hint == defaultChannel.altPrivateWakeSequence))
   {
     return HINT_TYPE_WAKE;
@@ -1316,7 +1327,7 @@ Our channel.
 
 If True, DATA and DATALEN will be the decoded and decrypted payload.
 */
-bool RFM69::decodeSG1()
+uint8_t RFM69::decodeSG1()
   {
     int8_t _rssi = RSSI;
     gotSpecialPacket = false;
@@ -1325,7 +1336,7 @@ bool RFM69::decodeSG1()
     if (decodeSG1Header() == false)
     {
 
-      return false;
+      return 0;
     }
 
     doTimestamp();
@@ -1344,7 +1355,7 @@ bool RFM69::decodeSG1()
     if (tmpDatalen > 80)
     {
       debug("long");
-      return false;
+      return 0;
     }
 
     //Check what kind of FEC we are supposed to be using.
@@ -1359,7 +1370,7 @@ bool RFM69::decodeSG1()
         if (golay_block_decode(DATA + i + 5, tmpBuffer + (i / 2)))
         {
           debug("badfec");
-          return false;
+          return 0;
         }
       }
       //Subtract header, div by 2 because of code rate.
@@ -1381,7 +1392,9 @@ bool RFM69::decodeSG1()
     if (tmpDatalen == 3)
     {
       defaultChannel.recalcBeaconBytes();
-      uint8_t relevance = checkHintSequenceRelevance(rxHintSequence);
+      
+      //Only listen for private hints
+      uint8_t relevance = checkHintSequenceRelevance(rxHintSequence,true);
       if (relevance)
       {
         rxPathLoss = txRSSI - _rssi;
@@ -1411,9 +1424,14 @@ bool RFM69::decodeSG1()
         }
         debug("rb");
         DATALEN = 0;
-        return true;
+
+        //Since beacons are not secure, make sure someone can't accidentally read the 1st
+        //byte as an opcode(Forgetting to check length) and get random values, by always setting it to 0.
+        DATA[0]=0;
+        return 2;
       }
       debug("irb");
+      debug(rxHintSequence);
       DATALEN = 0;
       return false;
     }
@@ -1432,7 +1450,7 @@ bool RFM69::decodeSG1()
       rxTimeTrust += TIMETRUST_CLAIM_TRUST;
     }
 
-    if (checkHintSequenceRelevance(rxHintSequence))
+    if (checkHintSequenceRelevance(rxHintSequence,false))
     {
       //NodeID+timestamp is after hint
       memcpy(rxIV, tmpBuffer + 3, 8);
@@ -1509,7 +1527,7 @@ bool RFM69::decodeSG1()
                 //Autoreplies to very close and not yet conneted devices
                 //still need auto tx power control to not overload the reciever,
                 //which would prevent connection from happening. 
-                if((txRSSI - _rssi) <40)
+                if(_rssi > -40)
                 {
                   _powerLevel=-18;
                 }
@@ -1525,12 +1543,12 @@ bool RFM69::decodeSG1()
           if (getPacketTimestamp() <= channelTimestampHead)
           {
             debug("Rotl");
-            return false;
+            return 0;
           }
 
           if(!checkTimestampReplayAttack(getPacketTimestamp()))
           {
-            return false;
+            return 0;
           }
         }
       }
@@ -1562,15 +1580,13 @@ bool RFM69::decodeSG1()
         debug(tmpBuffer[remainingDataLen - 8]);
         //Not 3+8
         debug(tmpBuffer[2 + 8]);
-        return false;
+        return 0;
       }
 
 
       memcpy(DATA, tmpBuffer + 3 + 8, remainingDataLen - (3 + 8 + 8));
 
       rxPathLoss = txRSSI - _rssi;
-      lastSG1Presence = approxUnixMillis();
-      lastSG1Message = lastSG1Presence;
 
       //Remove the hint, IV, and MAC from the length
       //Store in the real data len so the user has it
@@ -1613,22 +1629,30 @@ bool RFM69::decodeSG1()
         memset(awaitReplyToIv, 0, 8);
         requestedReply = 0;
       }
+      
+      lastSG1Presence = approxUnixMillis();
       if (isSpecialType())
       {
         /*HANDLE SYSTEM RESERVED PACKETS*/
+
+        //These do not set the lastSG1Message flag, because we need to do
+        //bckground tasks without triggering a wakeup.
         debug("sp");
         gotSpecialPacket = true;
-        return false;
+        return 0;
       }
       debug("rcv");
-      return true;
+
+      //
+      lastSG1Message = lastSG1Presence;
+      return 1;
     }
     else
     {
       debug("Offchannel");
       debug(rxHintSequence);
       debug(defaultChannel.fixedHintSequence);
-      return false;
+      return 0;
     }
   }
 
@@ -1662,7 +1686,9 @@ bool RFM69::decodeSG1()
 
     uint32_t rxHintSequence = readHintSequence(DATA);
     defaultChannel.recalcBeaconBytes();
-    if (checkHintSequenceRelevance(rxHintSequence))
+
+    //Private sequences only here
+    if (checkHintSequenceRelevance(rxHintSequence,true))
     {
       debug("oh");
     }
@@ -1810,6 +1836,7 @@ bool RFM69::decodeSG1()
     {
       memcpy(tmpBuffer + 6, &(defaultChannel.privateHintSequence), 3);
     }
+    debug("hs");
     debug(defaultChannel.privateHintSequence);
 
     //If we need more than 3dbm, we also probably need to use error correction.
@@ -1844,6 +1871,8 @@ bool RFM69::decodeSG1()
   bool RFM69::checkBeaconSleep()
   {
     //Any recent message indicates we should stay awake.
+    //That only includes real user messages and replies to us,
+    //Not backgound time sync
     if (lastSG1Message > (approxUnixMillis() - 18000L))
     {
       //But we always send a beacon anyway.
@@ -1851,15 +1880,9 @@ bool RFM69::decodeSG1()
       return true;
     }
 
-    //If we have gotten
-    //a packet in the last 25 minutes we can use short beacons
-    //We need to stay in sync to within about 8s, and we're assuming the clock
-    //Can do that for at least an hour. Beacon operation just does't support not
-    //Having a decent clock.
-
-    //So we require resync at 5000 seconds.
-
-    if (lastSG1Message > (approxUnixMillis() - 5000000L))
+    //We can use short beacons only if we are currently "connected",
+    // Otherwise we will try to do a full packet for time sync.
+    if ((lastSG1Presence > (approxUnixMillis() - 600000)) && lastSG1Presence>0)
     {
       sendBeacon();
     }
@@ -1888,8 +1911,9 @@ bool RFM69::decodeSG1()
       if (receiveDone())
       {
         //Them sending us valid traffic is just as good as a wake
-        //message.
-        if (decodeSG1())
+        //message, but just replying with a beacon isn't because
+        //we have to do that in the background anyway.
+        if (decodeSG1()==1)
         {
           return 1;
         }

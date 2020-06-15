@@ -46,10 +46,10 @@ void setup()
 
   //This channel number determines the actual RF frequency. Set it to anything you
   //Want, the library knows how to wrap around if you go over the top channel.
-  radio.setChannelNumber(150);
+  radio.setChannelNumber(3);
 
   //Manual, use -127 to set automatic.
-  radio.setPowerLevel(12);
+  radio.setPowerLevel(-127);
 
   //Show state of module
   //radio.readAllRegs();
@@ -79,13 +79,18 @@ uint8_t attempts = 10;
 
 void loop()
 {
-  if((radio.monotonicMillis()-last)> 60000L || (last==0))
+
+ //This function hansles timesync for you as well.
+ if(radio.checkBeaconSleep())
   {
-    //Regular packet are needed for occasional clock sync
-    radio.sendSG1Request("test",4);
-    Serial.println("Sent packet");
-      //Listen for replies, so we can time sync. We only need to do this process every hour or so.
-      for(int i=0;i<25;i++)
+    Serial.println("Got wakeup flag");
+    //Do stuff here? Listen for packets for 1ms
+
+    //Send both kinds of message for a more complete test
+    radio.sendSG1RT("WAKE",4);
+    radio.sendSG1("WAKE",4);
+
+    for(int i=0;i<1000;i++)
       {
         if(radio.receiveDone())
         {
@@ -97,20 +102,13 @@ void loop()
           {
             Serial.println(millis()-start);
             Serial.println("decoded");
-            last=radio.monotonicMillis();
           }
-        }
-        Serial.flush();
-        radio.sleepMCU(15);
-      }
-      Serial.println("sync attaempt done");
-  }
+            last=radio.approxUnixMillis();
 
- //What this does is o  
- if(radio.checkBeaconSleep())
-  {
-    Serial.println("Got wakeup flag");
-    //Do stuff here?
+        }
+        delay(1);
+        Serial.flush();
+      }
   
   }
   else
@@ -118,12 +116,10 @@ void loop()
     Serial.println("No wakeup flag, radio sleeping 5s");
     Serial.println((int32_t)(radio.unixMicros()/1000000LL));
     radio.sleep();
-  }
 
-  Serial.println("sleep");
-  Serial.flush();
-  //Use a true low power mode 
-  
-  radio.sleepMCU(5000);
-  Serial.println("wake");
+    //Sleep here with true low power sleep instead of delay for real applications
+    delay(5000);
+    //Wake radio back up
+    radio.receiveDone();
+  }
 }
