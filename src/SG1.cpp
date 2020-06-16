@@ -1873,6 +1873,12 @@ uint8_t RFM69::decodeSG1()
     //Any recent message indicates we should stay awake.
     //That only includes real user messages and replies to us,
     //Not backgound time sync
+    
+    //In case of FHSS
+    setChannelNumber(channelNumber);
+
+    uint8_t retVal =0;
+
     if (lastSG1Message > (approxUnixMillis() - 18000L))
     {
       //But we always send a beacon anyway.
@@ -1888,6 +1894,9 @@ uint8_t RFM69::decodeSG1()
     }
     else
     {
+      //Randomly hop around in hopes of finding them.   But this
+      //could take hours if only trying once per minute so watch out.
+      fhssOffset = xorshift16();
       //Otherwise we have to send a whole reliable_special packet,
       //So that they can send us the correct time.
       rawSendSG1(0, 0, 0, HEADER_TYPE_RELIABLE_SPECIAL);
@@ -1915,15 +1924,19 @@ uint8_t RFM69::decodeSG1()
         //we have to do that in the background anyway.
         if (decodeSG1()==1)
         {
-          return 1;
+          retVal= 1;
+          break;
         }
         if (wakeRequestFlag)
         {
-          return 1;
+          retVal= 1;
+          break;
         }
       }
     }
-    return 0;
+
+    fhssOffset=0;
+    return retVal;
   }
 
   void RFM69::setChannelKey(unsigned char *key)
