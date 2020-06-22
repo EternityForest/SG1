@@ -104,6 +104,40 @@ static uint8_t systemTimeTrust = 0;
 uint32_t millisToUnix=0;
 
 
+//We have to do our own 64 bit compare because
+//the real one seems to be broken as heck.
+static bool gteq64(uint8_t * a, uint8_t * b)
+{
+  //Topmost bit will tell us the sign
+  bool aNeg = a[7]&128;
+  bool bNeg = b[7]&128;
+
+
+  //If bNeg but not aNeg, a must be bigger
+  //because positive is always bigger
+  if(aNeg != bNeg)
+  {
+    debug("bng");
+    return bNeg;
+  }
+
+  //By this point the sign bit is known to be the same, so we can just do a simple
+  //bitwise comparision, most significant byte first
+  for (uint8_t i =0;i<8;i++)
+  {
+      if(b[7-i] != a[7-i])
+      {
+        debug("l1");
+        debug(7-i);
+        debug(b[7-i]);
+        debug(a[7-i]);
+
+        return a[7-i]>b[7-i];
+      }
+  }
+  //Default to true,  if b is not bigger, a is greater than or equal
+  return true;
+}
 //Binary ppm, parts per 2**20
 static int32_t systemTimebPPMAdjust = 0;
 
@@ -146,6 +180,10 @@ uint32_t saturatingAbs(int64_t p)
   {
     if(  (((uint8_t *)&p)[i]) != target)
     {
+      debug("x1");
+      debug(i);
+      debug(((uint8_t *)&p)[i]);
+      debug(target);
       return 4000000000UL;
     }
   }
@@ -154,6 +192,8 @@ uint32_t saturatingAbs(int64_t p)
   //Otherwise, the number would be too big to fig in 32 once we add the sign bit.
   if (((((uint8_t *)&p)[3]) & 128) != (target&128))
   {
+    debug("x");
+    debug((((uint8_t *)&p)[3]));
     return 4000000000UL;
   }
 
@@ -849,12 +889,17 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
   
   if(saturatingAbs(diff)>2000000L)
   {
+    
+      debug(saturatingAbs(diff));
+      debug((int32_t)diff>>32);
       canDoSmallAdjust = false;
       debug("s1");
   }
   else
   {
     debug("doadj");
+    debug(saturatingAbs(diff));
+    debug((int32_t)diff>>32);
   }
 
   //canDoSmallAdjust=false;
@@ -873,13 +918,23 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
     return;
   }
 
+  //If we have complete challenge-response assurance, we should
+  //just jump, because then we can uncorrup the channel timestamp head if
+  //it has somehow got outta whacc.
+  if((rxTimeTrust >= TIMETRUST_CHALLENGERESPONSE))
+  {
+    canDoSmallAdjust=false;
+  }
+
   //Packet is secure, and very close to our time, this lets us do small
   //adjustments without challenge response
   if (((rxTimeTrust & TIMETRUST_ACCURATE) || ((systemTimeTrust & TIMETRUST_ACCURATE) == 0)) && (rxTimeTrust >= TIMETRUST_SECURE) && canDoSmallAdjust)
   {
     debug("adj");
     debug(canDoSmallAdjust);
-    doTimestamp(diff);
+
+    //Move by 1/8 the difference to hopefully eventually get to a consenseus.
+    doTimestamp( ((int32_t)diff) >> 3 );
     //Stop the FHSS search when we are actually connected.
   }
 
@@ -1291,35 +1346,70 @@ bool RFM69::pairWithRemote(uint8_t nodeID)
   setChannelNumber(oldChannel);
   setPowerLevel(oldPowerLevel);
 }
+
 bool RFM69::checkTimestampReplayAttack(int64_t ts)
 {
-          int64_t diff = ts - systemTime;
+    int64_t diff = ts - systemTime;
 
-          int32_t diff32 = saturatingAbs(diff);
-          debug("chrpa");
-          debug(diff32);
+    int32_t diff32 = saturatingAbs(diff);
+    debug("chrpa");
+    debug(diff32);
 
+
+    //16 seconds max err
+    if (diff32>16000000L)
+    {
+
+      debug("rtsmp");
+      return false;
+    }
     
+    uint64_t x = systemTime + 16000000LL;
+    if (gteq64((uint8_t *)&channelTimestampHead,(uint8_t *)&x))
+    {
+      //Due to an unknown bug it is possible for the
+      //timestamp head to be impossibly ahead of system time.
+      //This fixes that.  TODO look into the security implications
+      //of this fix, and how the corruption happens at all.
 
+      //I believe this is really only an issue when lots of things are rebooting.
+      //And this can never set the time before the system time, so it shouldn'
+      //allow any old packets in, but it will recover from
+      //effects of random nonsense timestamps.
 
-          //16 seconds max err
-          if (diff32>16000000L)
-          {
+      debug("fxchtsh");
+      channelTimestampHead=systemTime+16000000LL;
+    }
 
-            debug("rtsmp");
-            return false;
-          }
+    if (gteq64((uint8_t *)&channelTimestampHead,(uint8_t *)&ts))
+    {
+      sendTimeReply();
+      debug("Rotl");
+      debug((int32_t)(ts/1000000LL));
+      debug((int32_t)(channelTimestampHead/1000000LL));
+      return 0;
+    }
 
-          if (systemTimeTrust < TIMETRUST_CHALLENGERESPONSE)
-          {
-            debug("rlc");
-            return false;
-          }
+    if (systemTimeTrust < TIMETRUST_CHALLENGERESPONSE)
+    {
+      debug("rlc");
+      return false;
+    }
 
-          return true;
+    return true;
 }
 
 
+void RFM69::sendTimeReply()
+{
+  if ((approxUnixMillis()-lastSentTimeAutoreply) > 100)
+    {
+      debug("tr");
+      debug((int32_t)(systemTime/1000000L));
+      rawSendSG1(smallBuffer, 0, rxIV, HEADER_TYPE_REPLY_SPECIAL);
+      lastSentTimeAutoreply=approxUnixMillis();
+    }
+}
   /*
 After recieving a packet, call this to decode it.
 Returns 1 if the message was an SG1 packet addressed to 
@@ -1522,7 +1612,6 @@ uint8_t RFM69::decodeSG1()
                 ///the reason we can do this automatically without corrupting state is
                 //Replies can't be replied to, so sending this won't overwrite the value that
                 //Says what we are watching for, if we were watching for something
-                debug("sndar");
                 int8_t oldpwr = _powerLevel;
                 //Autoreplies to very close and not yet conneted devices
                 //still need auto tx power control to not overload the reciever,
@@ -1531,7 +1620,7 @@ uint8_t RFM69::decodeSG1()
                 {
                   _powerLevel=-18;
                 }
-                rawSendSG1(smallBuffer, 0, rxIV, HEADER_TYPE_REPLY_SPECIAL);
+                sendTimeReply();
                 _powerLevel=oldpwr;
               }
             }
@@ -1540,16 +1629,11 @@ uint8_t RFM69::decodeSG1()
 
         if (replayProtection)
         {
-          if (getPacketTimestamp() <= channelTimestampHead)
-          {
-            debug("Rotl");
-            return 0;
-          }
-
           if(!checkTimestampReplayAttack(getPacketTimestamp()))
           {
             return 0;
           }
+
         }
       }
 
@@ -1708,7 +1792,7 @@ uint8_t RFM69::decodeSG1()
     //We still do the replay protection for this.
     if (replayProtection)
     {
-      uint64_t rxTimestamp;
+      int64_t rxTimestamp;
 
       //The 0 byte of the IV is actualy the node ID at this point
       //That doesn't matter since we don't need submillisecond accuracy

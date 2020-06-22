@@ -388,6 +388,7 @@ class RFM69{
     void readAllRegs();
     void readAllRegsCompact();
     bool isRecieving();
+    void sendTimeReply();
 
     int64_t rxTime=0;
 
@@ -406,6 +407,12 @@ class RFM69{
     unsigned long lastSG1Message=0;
 
     unsigned long lastSentSG1=0;
+
+    //Rate limit these
+    unsigned long lastSentTimeAutoreply=0;
+
+
+
 
     int8_t getAutoTxPower();
     
