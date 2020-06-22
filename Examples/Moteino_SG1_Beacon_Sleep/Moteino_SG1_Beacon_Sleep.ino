@@ -71,6 +71,9 @@ void setup()
 
   radio.setChannelKey((uint8_t *)key);
 
+  //Send something to try and get them to send us time sync info
+  radio.sendSG1("BOOT", 4);
+
 }
 
 unsigned long last = 0;
@@ -80,41 +83,45 @@ uint8_t attempts = 10;
 void loop()
 {
 
- //This function hansles timesync for you as well.
- if(radio.checkBeaconSleep())
+  //This function hansles timesync for you as well.
+  if (radio.checkBeaconSleep())
   {
     Serial.println("Got wakeup flag");
     //Do stuff here? Listen for packets for 1ms
 
     //Send both kinds of message for a more complete test
-    radio.sendSG1RT("WAKE",4);
-    radio.sendSG1("WAKE",4);
+    radio.sendSG1RT("WAKE", 4);
+    Serial.println("Sent RT");
 
-    for(int i=0;i<1000;i++)
+    radio.sendSG1("WAKE", 4);
+    Serial.println("Sent SG1");
+
+
+    for (int i = 0; i < 1000; i++)
+    {
+      if (radio.receiveDone())
       {
-        if(radio.receiveDone())
+        Serial.println("Got raw data");
+        Serial.println(radio.DATALEN);
+        //Getting a reply means we can skip this for 10 miniutes
+        unsigned long start = millis();
+        if (radio.decodeSG1())
         {
-          Serial.println("Got raw data");
-          Serial.println(radio.DATALEN);
-          //Getting a reply means we can skip this for 10 miniutes
-          unsigned long start = millis();
-          if(radio.decodeSG1())
-          {
-            Serial.println(millis()-start);
-            Serial.println("decoded");
-          }
-            last=radio.approxUnixMillis();
-
+          Serial.println(millis() - start);
+          Serial.println("decoded");
         }
-        delay(1);
-        Serial.flush();
+        last = radio.approxUnixMillis();
+
       }
-  
+      delay(1);
+      Serial.flush();
+    }
+
   }
   else
   {
     Serial.println("No wakeup flag, radio sleeping 5s");
-    Serial.println((int32_t)(radio.unixMicros()/1000000LL));
+    Serial.println((int32_t)(radio.unixMicros() / 1000000LL));
     radio.sleep();
 
     //Sleep here with true low power sleep instead of delay for real applications

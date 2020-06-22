@@ -102,6 +102,11 @@ This has to be a 32 byte random key that defines the channel. Only applies to SG
 
 The first time you do this, the internal entropy pool gets encrypted with the key.
 
+WARNING: At present, switching channels allows packets from the last 18 seconds to be replayed. This is because different devices may have slightly different clocks,
+and we don't want to miss packets due to false replay detection.
+
+The Kaithem gateway software performs host side checking to compensate for this.
+
 ### radio.receiveDone()
 If we are recieving, return true and go to standby  got a packet. If not, start recieving.
 

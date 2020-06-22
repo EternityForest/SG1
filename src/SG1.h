@@ -365,7 +365,7 @@ class RFM69{
 
     virtual void sendSG1Reply(const void* buffer, uint8_t bufferSize);
     virtual void sendSG1Request(const void* buffer, uint8_t bufferSize);
-
+    
     virtual bool receiveDone();
    
     uint32_t getFrequency();
@@ -431,6 +431,8 @@ class RFM69{
   
   static void writeInt64(void * p, int64_t val);
   static int64_t readInt64(void * p);
+  //Are we waiting for a reply
+  uint8_t awaitReplyToIv[8];
 
   protected:
 
@@ -481,8 +483,7 @@ class RFM69{
     //Most recent timestamp that re have decoded.
     int64_t channelTimestampHead=-9223372036854775807LL;
 
-    //Are we waiting for a reply
-    uint8_t awaitReplyToIv[8];
+
 
     uint8_t _slaveSelectPin;
     uint8_t _interruptPin;

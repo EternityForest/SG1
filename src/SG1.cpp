@@ -1894,6 +1894,7 @@ uint8_t RFM69::decodeSG1()
     }
     else
     {
+      debug("fpn");
       //Randomly hop around in hopes of finding them.   But this
       //could take hours if only trying once per minute so watch out.
       fhssOffset = xorshift16();
@@ -1941,6 +1942,10 @@ uint8_t RFM69::decodeSG1()
 
   void RFM69::setChannelKey(unsigned char *key)
   {
+    doTimestamp();
+    //We can't maintain a counter for every channel we talk to,
+    //So add some extra wiggle room when changing channels.
+    channelTimestampHead = systemTime - 18000000L;
     defaultChannel.setChannelKey(key);
   }
 /*

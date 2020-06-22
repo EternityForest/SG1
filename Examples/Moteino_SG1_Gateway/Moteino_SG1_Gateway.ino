@@ -153,6 +153,9 @@ uint8_t tmp[129];
 #define MSG_HW_FAIL 17
 #define MSG_DECODEDBEACON 18
 #define MSG_LATENCYTEST 19
+#define MSG_BGNOISE 20
+#define MSG_SENDREQUEST 21
+#define MSG_SENDREPLY 22
 
 bool listening = 0;
 
@@ -229,8 +232,10 @@ void callback(byte command, byte *payload, byte length) {
           SERWRITE(radio.RSSI);
           SERWRITEN(radio.rxIV,8);
   
+
+          SERWRITE(radio.rxHeader[1]);
           // Reserved padding bytes.
-          SERWRITE(0);
+
           SERWRITE(0);
           SERWRITE(0);
           SERWRITE(0);
@@ -272,6 +277,30 @@ void callback(byte command, byte *payload, byte length) {
       //3 reserved bytes here
 
       radio.sendSG1(payload + 4, length - 4);
+      nfSend(MSG_SENT, 0, 0);
+      break;
+      
+    case MSG_SENDREQUEST:
+      radio.setPowerLevel((int8_t)(payload[0]));
+      //3 reserved bytes here
+
+      radio.sendSG1(payload + 4, length - 4);      
+      SERWRITE(42);
+          SERWRITE(1+32+8);
+          SERWRITE(MSG_SENT);
+          // We can save and restore the IV we are waiting for this way.
+          SERWRITEN(radio.defaultChannel.channelKey, 32);
+          SERWRITEN(radio.awaitReplyToIv, 8);  
+      SERWRITE(43);      
+      break;
+
+    case MSG_SENDREPLY:
+      radio.setPowerLevel((int8_t)(payload[0]));
+      //3 reserved bytes here
+
+      //The computer has to tell us what we are replying to, we could have just switched here.
+      memcpy(radio.rxIV, payload+4,8);
+      radio.sendSG1Reply(payload + 4+8, length - (4+8));
       nfSend(MSG_SENT, 0, 0);
       break;
 
@@ -352,7 +381,7 @@ void setup()
 }
 
 
-byte smallBuf[8];
+byte smallBuf[32+8];
 
 unsigned long lastSentVersion;
 
@@ -367,6 +396,11 @@ void loop()
     smallBuf[2] = '1';
     smallBuf[3] = VERSION;
     nfSend(MSG_VERSION,smallBuf, 4);
+
+    smallBuf[0]= radio.readRSSI();
+    nfSend(MSG_BGNOISE,smallBuf, 1);
+
+ 
   }
   // RECEIVING
   // In this section, we'll check with the RFM69HCW to see
