@@ -146,7 +146,12 @@ bool RFM69::initialize(uint8_t freqBand)
   getEntropy(96);
   debug(2);
   setMode(RF69_MODE_STANDBY);
-  setProfile(RF_PROFILE_GFSK250K);
+  //Set them to whatever they were before, if the user was using a predefined RF
+  //profile, which we assume they are for SG1.
+
+  //this allows us to re-init the radio in case of any failures.
+  setProfile(rfProfile);
+  setChannelNumber(channelNumber)
   debug(3);
 
   return true;
@@ -345,6 +350,7 @@ bool RFM69::waitModeReady()
       break;
     }
     delayMicroseconds(1);
+    safety--;
   }
   if(safety)
   {
@@ -352,7 +358,9 @@ bool RFM69::waitModeReady()
   }
   else
   {
-    Serial.write('e');
+    //Try to redo the whole radio init process.
+    initialize(freqBand);
+    delay(5000);
     return 0;
   }
 }
