@@ -130,8 +130,7 @@ bool RFM69::initialize(uint8_t freqBand)
   setHighPower(_isRFM69HW); // called regardless if it's a RFM69W or RFM69HW
   setMode(RF69_MODE_STANDBY);
   start = millis();
-  while (((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00) && millis()-start < timeout); // wait for ModeReady
-  if (millis()-start >= timeout)
+  if (!waitModeReady())
     {
     Serial.write('F');
     return false;
@@ -211,7 +210,10 @@ void RFM69::setMode(uint8_t newMode)
 
   // we are using packet mode, so this check is not really needed
   // but waiting for mode ready is necessary when going from sleep because the FIFO may not be immediately available from previous mode
-  while  (_mode == RF69_MODE_SLEEP && (readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00); // wait for ModeReady
+  if  (_mode == RF69_MODE_SLEEP)
+  {
+    waitModeReady();
+  }
 
   _mode = newMode;
 }
@@ -333,6 +335,27 @@ void RFM69::send(const void* buffer, uint8_t bufferSize)
   sendFrame(buffer, bufferSize);
 }
 
+bool RFM69::waitModeReady()
+{
+  // wait for ModeReady
+  uint16_t safety= 65535;
+  while (safety){
+    if(readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY)
+    {
+      break;
+    }
+    delayMicroseconds(1);
+  }
+  if(safety)
+  {
+    return 1;
+  }
+  else
+  {
+    Serial.write('e');
+    return 0;
+  }
+}
 
 // internal function
 void RFM69::sendFrame(const void* buffer, uint8_t bufferSize)
@@ -340,7 +363,10 @@ void RFM69::sendFrame(const void* buffer, uint8_t bufferSize)
   setMode(RF69_MODE_STANDBY); // turn off receiver to prevent reception while filling fifo
 
 
-  while ((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00); // wait for ModeReady
+  if(!waitModeReady())
+  {
+    return;
+  }
   writeReg(REG_DIOMAPPING1, RF_DIOMAPPING1_DIO0_00); // DIO0 is "Packet Sent"
   if (bufferSize > RF69_MAX_DATA_LEN){
     bufferSize = RF69_MAX_DATA_LEN;

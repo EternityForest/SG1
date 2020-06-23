@@ -450,6 +450,10 @@ class RFM69{
     bool trySend(const void* buffer, uint8_t bufferSize);
     void getEntropy(uint8_t changes=128);
 
+    //Wait 65ms for mode ready, return True.
+    //print 'e' and return False on timeouts.
+    bool waitModeReady();
+
     bool checkTimestampReplayAttack(int64_t ts);
     void recalcBeaconBytes();
     void doPerPacketTimeFunctions(uint8_t rxTimeTrust);

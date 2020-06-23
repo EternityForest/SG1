@@ -950,10 +950,6 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
     debug((int32_t)(diff>>32));
     systemTime = systemTime + diff;
 
-    //Yes, this can go backwards. It's somewhat of a nonce reuse hazard.
-    //You got a better plan?
-    channelTimestampHead = getPacketTimestamp();
-
     // Only local stuff can set that header, because we don't have code to really
     // Keep track of when it becomes no longer accurate.
     systemTimeTrust = rxTimeTrust &(~TIMETRUST_ACCURATE);
@@ -1375,7 +1371,7 @@ bool RFM69::checkTimestampReplayAttack(int64_t ts)
       //I believe this is really only an issue when lots of things are rebooting.
       //And this can never set the time before the system time, so it shouldn'
       //allow any old packets in, but it will recover from
-      //effects of random nonsense timestamps.
+      //effects of random nonsense timestamps.(
 
       debug("fxchtsh");
       channelTimestampHead=systemTime+16000000LL;
@@ -1685,6 +1681,8 @@ uint8_t RFM69::decodeSG1()
       if (replayProtection)
       {
         //Mark it so we don't accept old packets again.
+        //Note that this can go backwards, so it's not perfect.
+        //For best security you want a true real time clock somewhere in the system.
         channelTimestampHead = getPacketTimestamp();
       }
 
@@ -2029,6 +2027,8 @@ uint8_t RFM69::decodeSG1()
     doTimestamp();
     //We can't maintain a counter for every channel we talk to,
     //So add some extra wiggle room when changing channels.
+    //This is really not the best security, but packets should be mostly
+    //idempotent
     channelTimestampHead = systemTime - 18000000L;
     defaultChannel.setChannelKey(key);
   }
@@ -2314,13 +2314,16 @@ uint8_t RFM69::decodeSG1()
     uint8_t x = 0;
     uint8_t y = 0;
 
-
+    //Some might call this unsafety, but i think
+    //it's better than an endless loop if the radio malfunctions
+    uint32_t safety = 1000000L;
     for (int i = 0; i < changes; i++)
     {
-      while (1)
+      while (safety)
       { //Look for changes in RSSI.
         //Don't bother looking at other data, RSSI can be read without
         //changing the mode of the sensor
+        safety--;
         y = (uint8_t)readRSSI();
 
         //It's not really possible for adding uncorrelated values to
