@@ -117,7 +117,6 @@ static bool gteq64(uint8_t * a, uint8_t * b)
   //because positive is always bigger
   if(aNeg != bNeg)
   {
-    debug("bng");
     return bNeg;
   }
 
@@ -127,11 +126,6 @@ static bool gteq64(uint8_t * a, uint8_t * b)
   {
       if(b[7-i] != a[7-i])
       {
-        debug("l1");
-        debug(7-i);
-        debug(b[7-i]);
-        debug(a[7-i]);
-
         return a[7-i]>b[7-i];
       }
   }
@@ -180,10 +174,6 @@ uint32_t saturatingAbs(int64_t p)
   {
     if(  (((uint8_t *)&p)[i]) != target)
     {
-      debug("x1");
-      debug(i);
-      debug(((uint8_t *)&p)[i]);
-      debug(target);
       return 4000000000UL;
     }
   }
@@ -192,8 +182,6 @@ uint32_t saturatingAbs(int64_t p)
   //Otherwise, the number would be too big to fig in 32 once we add the sign bit.
   if (((((uint8_t *)&p)[3]) & 128) != (target&128))
   {
-    debug("x");
-    debug((((uint8_t *)&p)[3]));
     return 4000000000UL;
   }
 
@@ -889,18 +877,9 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
   
   if(saturatingAbs(diff)>2000000L)
   {
-    
-      debug(saturatingAbs(diff));
-      debug((int32_t)diff>>32);
       canDoSmallAdjust = false;
-      debug("s1");
   }
-  else
-  {
-    debug("doadj");
-    debug(saturatingAbs(diff));
-    debug((int32_t)diff>>32);
-  }
+
 
   //canDoSmallAdjust=false;
   
@@ -947,7 +926,6 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
     debug("tj");
     debug(canDoSmallAdjust);
     debug((int32_t)diff);
-    debug((int32_t)(diff>>32));
     systemTime = systemTime + diff;
 
     // Only local stuff can set that header, because we don't have code to really
@@ -965,7 +943,6 @@ void RFM69::doPerPacketTimeFunctions(uint8_t rxTimeTrust)
     debug(systemTimeTrust);
     debug(rxTimeTrust);
     debug((int32_t)(systemTime >> 32));
-    debug((int32_t)(diff >> 32));
     debug((int32_t)(diff));
   }
 }
@@ -1360,7 +1337,7 @@ bool RFM69::checkTimestampReplayAttack(int64_t ts)
       return false;
     }
     
-    uint64_t x = systemTime + 16000000LL;
+    int64_t x = systemTime + 16000000LL;
     if (gteq64((uint8_t *)&channelTimestampHead,(uint8_t *)&x))
     {
       //Due to an unknown bug it is possible for the
@@ -2312,7 +2289,7 @@ uint8_t RFM69::decodeSG1()
     //Usable especially since we are always adding entropy from different sources.
 
     uint8_t x = 0;
-    uint8_t y = 0;
+    uint8_t y;
 
     //Some might call this unsafety, but i think
     //it's better than an endless loop if the radio malfunctions

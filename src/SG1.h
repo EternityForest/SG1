@@ -328,7 +328,7 @@ class RFM69{
     void setProfile(uint8_t profile);
 
     //unknown
-    uint8_t rfProfile=0;
+    uint8_t rfProfile=7;
 
     void setChannelSpacing(uint32_t hz);
 

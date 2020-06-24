@@ -151,7 +151,7 @@ bool RFM69::initialize(uint8_t freqBand)
 
   //this allows us to re-init the radio in case of any failures.
   setProfile(rfProfile);
-  setChannelNumber(channelNumber)
+  setChannelNumber(channelNumber);
   debug(3);
 
   return true;
