@@ -127,16 +127,19 @@ It will reply to any short beacon frames with a beacon or wake mesaage.
 ### radio.sendSG1RT(buffer, len)
 Sends an SG1RT packet. These have only 128 bits of overhead, but do not include forward error correction.  
 
-They also use a weak 2-byte mac, allowing you to occasionally send forged messages that appear as garbage data(1 in 65k fake messages may get through).
+They also use a weak 4-byte mac, allowing you to occasionally send forged messages that appear as garbage data(1 in 2**32 fake messages may get through, about 1 a year
+if someone is really hammering away.).
 
 You can't use these without also exchanging full data packets to sync the time,
-although there is quite a bit of misalignment tolerance.
+although there is quite a bit of misalignment tolerance.  
 
-Because of the optimization for very low overhead, it is possible to mis-decode
-these packets even with perfect signal strength, if the clocks are not aligned.
+In fact, because of the rolling code, there is likely
+no easy way to even detect that an RT packet is being sent to you, 
+unless you have both the key and synchronized clocks.
 
-With totally misaligned clocks, 1 in ~65,000 packets may slip through and appear
-to be correct but return garbage, and zero correct packets can be recieved until the time is synced.
+
+
+Because of the optimization for very low overhead, it is theoretically possible to mis-decode these packets even with perfect signal strength, if the clocks are not aligned, although the rolling code makes this highly unlikely.
 
 
 ### radio.decodeSG1RT()
