@@ -29,6 +29,20 @@
 #include <SPI.h>
 
 
+//This bit indicates if the packet is a reply
+#define HEADER_TYPE_FIELD 0b1110000
+
+//Same as normal unreliable messages.
+#define HEADER_TYPE_SPECIAL 0b0000000
+
+#define HEADER_TYPE_UNRELIABLE 0b0010000
+#define HEADER_TYPE_RELIABLE 0b0100000
+//Any reply types will always have bit 6 set
+#define HEADER_TYPE_REPLY 0b1000000
+#define HEADER_TYPE_REPLY_SPECIAL 0b1010000
+
+#define HEADER_TYPE_RELIABLE_SPECIAL 0b0110000
+
 //Levels of time trust. OR the trust attributes together to get a trust level
 #define TIMETRUST_ACCURATE 1
 #define TIMETRUST_CLAIM_TRUST 2
@@ -441,6 +455,11 @@ class RFM69{
   //Are we waiting for a reply
   uint8_t awaitReplyToIv[8];
 
+  //Used internally by the system to track if we got a special message
+  //Also used by the gateway, so we can detect special packets
+  bool gotSpecialPacket=0;
+
+
   protected:
 
     static void isr0();
@@ -474,8 +493,6 @@ class RFM69{
     //Reads a byte array into a 20 bit number
     static uint32_t readHintSequence(uint8_t *);
 
-    //Used internally by the system to track if ew got a special message
-    bool gotSpecialPacket=0;
 
     //Lets us do _recieveDone in the internal loop but
     //mark the packet as unhandled to return it to the user later
