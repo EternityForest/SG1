@@ -76,9 +76,9 @@ class NanoframeParser
           }
           return;
         }
-        
+
         //Don't know how it could ever get into that state, but defensive programing and all.
-        if(rxPtr > rxLen)
+        if (rxPtr > rxLen)
         {
           state = AWAIT_END;
         }
@@ -91,8 +91,8 @@ class NanoframeParser
         {
           state = AWAIT_START;
         }
-     
-       
+
+
       }
       else
       {
@@ -118,7 +118,7 @@ NanoframeParser parser;
 
 
 #if !defined(__AVR__)
-RFM69 radio(8,3,true);
+RFM69 radio(8, 3, true);
 #else
 
 RFM69 radio;
@@ -156,6 +156,14 @@ uint8_t tmp[129];
 #define MSG_BGNOISE 20
 #define MSG_SENDREQUEST 21
 #define MSG_SENDREPLY 22
+#define MSG_DECODEDSPECIAL 23
+#define MSG_SENDSPECIALREQUEST 24
+#define MSG_SENDSPECIAL 25
+#define MSG_SENDSPECIALREPLY 26
+#define MSG_DECODEDREPLY 27
+#define MSG_DECODEDSPECIALREPLY 28
+
+
 
 bool listening = 0;
 
@@ -171,7 +179,7 @@ void nfSend(char cmd, uint8_t *d, uint8_t len)
 
 
 uint8_t alreadyDecoded = 0;
-
+byte reqID = 0;
 void callback(byte command, byte *payload, byte length) {
   /* Make use of the payload before sending something, the buffer where payload points to is
      overwritten when a new message is dispatched */
@@ -182,30 +190,30 @@ void callback(byte command, byte *payload, byte length) {
 
     case MSG_DECODE:
       //We don't decode one message twice
-      if(alreadyDecoded)
+      if (alreadyDecoded)
       {
         break;
       }
-      
-      if(payload[0]&1)
+
+      if (payload[0] & 1)
       {
         radio.keepRemotesAwake = 1;
       }
-      else{
-        radio.keepRemotesAwake=0;
+      else {
+        radio.keepRemotesAwake = 0;
       }
 
       //Same command decodes both RT and non-RT frames
 
-      
-      if(radio.decodeSG1RT())
+
+      if (radio.decodeSG1RT())
       {
         alreadyDecoded = 1;
         SERWRITE(42);
-        SERWRITE(1+ 1+ 8+ 4 + 32 + radio.DATALEN);
+        SERWRITE(1 + 1 + 8 + 4 + 32 + radio.DATALEN);
         SERWRITE(MSG_DECODEDRT);
         SERWRITE(radio.RSSI);
-        SERWRITEN(radio.rxIV,8);
+        SERWRITEN(radio.rxIV, 8);
 
         // 4 reserved padding bytes
         SERWRITE(0);
@@ -222,86 +230,165 @@ void callback(byte command, byte *payload, byte length) {
 
         uint8_t result = radio.decodeSG1();
 
-        if (result==1)
+        if (result == 1 || radio.gotSpecialPacket)
         {
+          bool rp = radio.isReply();
+
           alreadyDecoded = 1;
           SERWRITE(42);
-          SERWRITE(1+1+1+ 8+ 4+ 32+ radio.DATALEN);
-          SERWRITE(MSG_DECODED);
+          if (rp)
+          {
+            //Extra 8 bytes, we're gonna tell them who this is a reply to
+            SERWRITE(1 + 1 + 1 + 8 + 4 + 32 + 8 + radio.DATALEN);
+            if (radio.gotSpecialPacket)
+            {
+              SERWRITE(MSG_DECODEDSPECIALREPLY);
+            }
+            else
+            {
+              SERWRITE(MSG_DECODEDREPLY);
+            }
+          }
+          else
+          {
+            SERWRITE(1 + 1 + 1 + 8 + 4 + 32 + radio.DATALEN);
+            if (radio.gotSpecialPacket)
+            {
+              SERWRITE(MSG_DECODEDSPECIAL);
+            }
+            else
+            {
+              SERWRITE(MSG_DECODED);
+            }
+          }
           SERWRITE(radio.rxPathLoss);
           SERWRITE(radio.RSSI);
-          SERWRITEN(radio.rxIV,8);
-  
+          SERWRITEN(radio.rxIV, 8);
+
 
           SERWRITE(radio.rxHeader[1]);
+          SERWRITE(radio.rxHeader[2]);
           // Reserved padding bytes.
+          SERWRITE(0);
+          SERWRITE(0);
 
-          SERWRITE(0);
-          SERWRITE(0);
-          SERWRITE(0);
-  
-          
+
           SERWRITEN(radio.defaultChannel.channelKey, 32);
+
+          //Send the challenge that was used to decode the reply
+          if (rp)
+          {
+            SERWRITEN(radio.awaitReplyToIv, 8);
+          }
           SERWRITEN(radio.DATA, (radio.DATALEN));
           SERWRITE(43);
         }
         //Handle beacons separately.
-        else if(result == 2)
+        else if (result == 2)
         {
           alreadyDecoded = 1;
           SERWRITE(42);
-          SERWRITE(1+1+1+ 4+32);
+          SERWRITE(1 + 1 + 1 + 4 + 32);
           SERWRITE(MSG_DECODEDBEACON);
           SERWRITE(radio.rxPathLoss);
-          SERWRITE(radio.RSSI);  
+          SERWRITE(radio.RSSI);
           // Reserved padding bytes.
           SERWRITE(0);
           SERWRITE(0);
           SERWRITE(0);
           SERWRITE(0);
-  
+
           SERWRITEN(radio.defaultChannel.channelKey, 32);
           SERWRITE(43);
         }
 
-        
       }
-   
+
       listening = 1;
       //Don't just leave that flag set and waste battery
-      radio.keepRemotesAwake=0;
+      radio.keepRemotesAwake = 0;
       break;
 
     case MSG_SEND:
+      debug(payload[4]);
       radio.setPowerLevel((int8_t)(payload[0]));
-      //3 reserved bytes here
-
+      reqID =  payload[1];
+      //2 reserved bytes
       radio.sendSG1(payload + 4, length - 4);
-      nfSend(MSG_SENT, 0, 0);
+
+      SERWRITE(42);
+      SERWRITE(1 + 1 + 8);
+      SERWRITE(MSG_SENT);
+      // We can save and restore the IV we are waiting for this way.
+      SERWRITE(reqID);
+      SERWRITEN(radio.awaitReplyToIv, 8);
+      SERWRITE(43);
       break;
-      
+
+    case MSG_SENDSPECIALREQUEST:
+      radio.setPowerLevel((int8_t)(payload[0]));
+      reqID =  payload[1];
+      //2 reserved bytes
+      radio.rawSendSG1(payload + 4, length - 4, 0, HEADER_TYPE_RELIABLE_SPECIAL);
+      SERWRITE(42);
+      SERWRITE(1 + 1 + 8);
+      SERWRITE(MSG_SENT);
+      // We can save and restore the IV we are waiting for this way.
+      SERWRITE(reqID);
+      SERWRITEN(radio.awaitReplyToIv, 8);
+      SERWRITE(43);
+      break;
+
+    case MSG_SENDSPECIAL:
+      radio.setPowerLevel((int8_t)(payload[0]));
+      reqID =  payload[1];
+      //2 reserved bytes
+
+      radio.rawSendSG1(payload + 4, length - 4, 0, HEADER_TYPE_SPECIAL);
+      SERWRITE(42);
+      SERWRITE(1 + 1 + 8);
+      SERWRITE(MSG_SENT);
+      // We can save and restore the IV we are waiting for this way.
+      SERWRITE(reqID);
+      SERWRITEN(radio.awaitReplyToIv, 8);
+      SERWRITE(43);
+      break;
+
+
     case MSG_SENDREQUEST:
       radio.setPowerLevel((int8_t)(payload[0]));
-      //3 reserved bytes here
+      reqID =  payload[1];
+      //2 reserved bytes
 
-      radio.sendSG1(payload + 4, length - 4);      
+      radio.sendSG1Request(payload + 4, length - 4);
       SERWRITE(42);
-          SERWRITE(1+32+8);
-          SERWRITE(MSG_SENT);
-          // We can save and restore the IV we are waiting for this way.
-          SERWRITEN(radio.defaultChannel.channelKey, 32);
-          SERWRITEN(radio.awaitReplyToIv, 8);  
-      SERWRITE(43);      
+      SERWRITE(1 + 1 + 8);
+      SERWRITE(MSG_SENT);
+      // We can save and restore the IV we are waiting for this way.
+      SERWRITE(reqID);
+      SERWRITEN(radio.awaitReplyToIv, 8);
+      SERWRITE(43);
       break;
 
     case MSG_SENDREPLY:
       radio.setPowerLevel((int8_t)(payload[0]));
       //3 reserved bytes here
+      reqID =  payload[1];
+      //2 reserved bytes
 
       //The computer has to tell us what we are replying to, we could have just switched here.
-      memcpy(radio.rxIV, payload+4,8);
-      radio.sendSG1Reply(payload + 4+8, length - (4+8));
-      nfSend(MSG_SENT, 0, 0);
+      memcpy(radio.rxIV, payload + 4, 8);
+      radio.sendSG1Reply(payload + 4 + 8, length - (4 + 8));
+      nfSend(MSG_SENT, &reqID, 1);
+      break;
+
+    case MSG_SENDSPECIALREPLY:
+      radio.setPowerLevel((int8_t)(payload[0]));
+      reqID =  payload[1];
+      //2 reserved bytes
+
+      radio.rawSendSG1(payload + 4, length - 4, 0, HEADER_TYPE_REPLY_SPECIAL);
+      nfSend(MSG_SENT, &reqID, 1);
       break;
 
     case MSG_RX:
@@ -347,31 +434,34 @@ void callback(byte command, byte *payload, byte length) {
       radio.pairWithRemote(payload[1]);
       break;
 
-   case MSG_LATENCYTEST:
-      nfSend(MSG_LATENCYTEST,0,0);
+    case MSG_LATENCYTEST:
+      nfSend(MSG_LATENCYTEST, 0, 0);
       break;
 
   }
 }
 
+
+
 void setup()
 {
   Serial.begin(250000);
   parser.callback = &callback;
-  Serial.println("SG1 GATEWAY");
-  if(radio.initialize(FREQUENCY)==false)
+  if (radio.initialize(FREQUENCY) == false)
   {
     Serial.println("RADIO CONNECT FAIL");
-    while(1){
+    while (1) {
       nfSend(MSG_HW_FAIL, 0, 0);
       Serial.println("FAILURE");
       delay(100);
-      while(Serial.available())
+      while (Serial.available())
       {
         Serial.read();
       }
     }
   }
+  Serial.println("SG1 GATEWAY");
+
   radio.setProfile(RF_PROFILE_GFSK250K);
   radio.setChannelNumber(150);
   radio.setPowerLevel(-127);
@@ -381,26 +471,27 @@ void setup()
 }
 
 
-byte smallBuf[32+8];
+byte smallBuf[32 + 8];
 
 unsigned long lastSentVersion;
+
 
 void loop()
 {
 
-  if(millis()-lastSentVersion >1000)
+  if (millis() - lastSentVersion > 1000)
   {
-    lastSentVersion=millis();
+    lastSentVersion = millis();
     smallBuf[0] = 'S';
     smallBuf[1] = 'G';
     smallBuf[2] = '1';
     smallBuf[3] = VERSION;
-    nfSend(MSG_VERSION,smallBuf, 4);
+    nfSend(MSG_VERSION, smallBuf, 4);
 
-    smallBuf[0]= radio.readRSSI();
-    nfSend(MSG_BGNOISE,smallBuf, 1);
+    smallBuf[0] = radio.readRSSI();
+    nfSend(MSG_BGNOISE, smallBuf, 1);
 
- 
+
   }
   // RECEIVING
   // In this section, we'll check with the RFM69HCW to see
@@ -415,20 +506,20 @@ void loop()
       //This doesn't disable the actual radio RX, it just keeps us from
       //polling it.
       listening = 0;
-      
-      memset(smallBuf,0,7);
-      
+
+      memset(smallBuf, 0, 7);
+
       smallBuf[0] = radio.RSSI;
-      
-      memcpy(smallBuf+1,radio.DATA,3);
-      
+
+      memcpy(smallBuf + 1, radio.DATA, 3);
+
 
       if (radio.decodeSG1Header())
       {
-        ((uint32_t *)(smallBuf+4))[0] = radio.readHintSequence();
+        ((uint32_t *)(smallBuf + 4))[0] = radio.readHintSequence();
       }
 
-  
+
 
       //Send format: RSSI, RawHint, decodedhint
       //Reciever has to check bothe to see if they make sense

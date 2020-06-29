@@ -167,6 +167,8 @@ have to decode first. Adds 25 bytes to every message, and doubles payload size i
 
 Note that up to 2 extra padding bytes may be added if the system decides Golay encoding is needed.
 
+## NOTE: For now, Request/Reply is not recommended due to lack of gateway support!!
+
 ### radio.sendSG1Reply(uint8_t * data, uint8_t len)
 
 Same as sendSG1, but sends as a reply to the last message recieved. You can reply to anything, except a reply, but it is not guaranteed to work if you reply to things

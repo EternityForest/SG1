@@ -1879,8 +1879,6 @@ uint8_t RFM69::decodeSG1()
     {
       memcpy(tmpBuffer + 6, &(defaultChannel.privateHintSequence), 3);
     }
-    debug("hs");
-    debug(defaultChannel.privateHintSequence);
 
     //If we need more than 3dbm, we also probably need to use error correction.
     //This adds an extra 3 bytes.

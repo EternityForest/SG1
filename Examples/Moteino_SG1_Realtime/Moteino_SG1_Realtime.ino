@@ -105,6 +105,12 @@ void loop()
 
     //block sending rt packet for a bit, nodes can only handle so many
     lastrt=millis();
+
+    //Rt packets can be used alongside all other packets
+    radio.sendSG1Request("req", 3);
+    last = millis();
+    Serial.println("Sent request packet");
+
     
   }
 

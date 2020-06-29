@@ -87,35 +87,55 @@ void loop()
   if (radio.checkBeaconSleep())
   {
     Serial.println("Got wakeup flag");
-    //Do stuff here? Listen for packets for 1ms
 
     //Send both kinds of message for a more complete test
-    radio.sendSG1RT("WAKE", 4);
+    radio.sendSG1RT("WAKERT", 6);
     Serial.println("Sent RT");
 
     radio.sendSG1("WAKE", 4);
     Serial.println("Sent SG1");
 
+    //Moteino gateways can't always handle as many packets per second as we want
+    delay(100);
 
-    for (int i = 0; i < 1000; i++)
+    //Send a request for an even more full test
+    radio.sendSG1Request("REQ", 3);
+    Serial.println("Sent SG1 Request");
+
+    //Listen for 1000ms
+    Serial.println("Start listen period");
+    for (int i = 0; i < 1000L; i++)
     {
       if (radio.receiveDone())
       {
         Serial.println("Got raw data");
         Serial.println(radio.DATALEN);
-        //Getting a reply means we can skip this for 10 miniutes
-        unsigned long start = millis();
         if (radio.decodeSG1())
         {
-          Serial.println(millis() - start);
           Serial.println("decoded");
+          if(!radio.isSpecialType())
+          {
+            if(radio.isReply())
+            {
+              Serial.println("Got a reply!");
+            }
+          }
+          else
+          {
+            if(radio.isReply())
+            {
+              Serial.println("Got a specialreply!");
+            }
+          }
         }
-        last = radio.approxUnixMillis();
+        Serial.write(radio.DATA,radio.DATALEN);
+        Serial.println("");
 
       }
       delay(1);
       Serial.flush();
     }
+    Serial.println("Stop listen period");
 
   }
   else

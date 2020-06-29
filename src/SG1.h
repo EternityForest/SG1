@@ -459,6 +459,8 @@ class RFM69{
   //Also used by the gateway, so we can detect special packets
   bool gotSpecialPacket=0;
 
+  bool isSpecialType();
+
 
   protected:
 
@@ -484,7 +486,6 @@ class RFM69{
 
     uint8_t _headerTimeTrust();
     bool _recieveDone();
-    bool isSpecialType();
 
 
     //Check against all the hint sequences we're looking for
