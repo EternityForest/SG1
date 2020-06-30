@@ -1006,6 +1006,11 @@ void RFM69::loadConnectionFromEEPROM(uint16_t eepromAddr)
 }
 
 
+void RFM69::setNodeID(uint8_t x)
+  {
+    nodeID=x;
+  };
+
 /*
 EEPROM Layout:
 

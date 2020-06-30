@@ -38,6 +38,10 @@ class NanoframeParser
     //Parse a byte using the rx buf, if you get a packet, return the len, else return -1
     void parse(uint8_t b, uint8_t * buf)
     {
+      debug("st");
+      debug(state);
+      debug(b);
+      debug(rxPtr);
       if (state == AWAIT_START)
       {
         if (b == STOP_CODE)
@@ -58,6 +62,11 @@ class NanoframeParser
       else if (state == AWAIT_LEN)
       {
         rxLen = b;
+        if(rxLen>128)
+        {
+          Serial.println("BADLEN");
+          Serial.flush();
+        }
         rxPtr = 0;
         state = AWAIT_DATA;
       }
@@ -67,12 +76,22 @@ class NanoframeParser
         buf[rxPtr] = b;
         rxPtr++;
 
+        //Detect and stop overruns, so nobody can flood us with nonsense
+        if(rxPtr >= 128)
+        {
+          state = AWAIT_END;
+          return;
+        }
+        
         if (rxPtr == rxLen)
         {
           state = AWAIT_END;
           if (callback)
           {
+            debug("CMD:");
+            debug(buf[0]);
             callback(buf[0], buf + 1, rxLen - 1);
+            debug("DONE");
           }
           return;
         }
@@ -91,7 +110,12 @@ class NanoframeParser
         {
           state = AWAIT_START;
         }
-
+        else
+        {
+          Serial.print("OVR");
+          Serial.println(buf[0]);
+          Serial.flush();
+        }
 
       }
       else
@@ -313,7 +337,15 @@ void callback(byte command, byte *payload, byte length) {
       debug(payload[4]);
       radio.setPowerLevel((int8_t)(payload[0]));
       reqID =  payload[1];
-      //2 reserved bytes
+
+      if (payload[2]) {
+        radio.setNodeID(payload[2]);
+      }
+      else
+      {
+        radio.setNodeID(1);
+      }
+      //1 reserved bytes
       radio.sendSG1(payload + 4, length - 4);
 
       SERWRITE(42);
@@ -328,7 +360,14 @@ void callback(byte command, byte *payload, byte length) {
     case MSG_SENDSPECIALREQUEST:
       radio.setPowerLevel((int8_t)(payload[0]));
       reqID =  payload[1];
-      //2 reserved bytes
+      if (payload[2]) {
+        radio.setNodeID(payload[2]);
+      }
+      else
+      {
+        radio.setNodeID(1);
+      }
+      //1 reserved bytes
       radio.rawSendSG1(payload + 4, length - 4, 0, HEADER_TYPE_RELIABLE_SPECIAL);
       SERWRITE(42);
       SERWRITE(1 + 1 + 8);
@@ -342,7 +381,14 @@ void callback(byte command, byte *payload, byte length) {
     case MSG_SENDSPECIAL:
       radio.setPowerLevel((int8_t)(payload[0]));
       reqID =  payload[1];
-      //2 reserved bytes
+      if (payload[2]) {
+        radio.setNodeID(payload[2]);
+      }
+      else
+      {
+        radio.setNodeID(1);
+      }
+      //1 reserved bytes
 
       radio.rawSendSG1(payload + 4, length - 4, 0, HEADER_TYPE_SPECIAL);
       SERWRITE(42);
@@ -358,7 +404,14 @@ void callback(byte command, byte *payload, byte length) {
     case MSG_SENDREQUEST:
       radio.setPowerLevel((int8_t)(payload[0]));
       reqID =  payload[1];
-      //2 reserved bytes
+      if (payload[2]) {
+        radio.setNodeID(payload[2]);
+      }
+      else
+      {
+        radio.setNodeID(1);
+      }
+      //1 reserved bytes
 
       radio.sendSG1Request(payload + 4, length - 4);
       SERWRITE(42);
@@ -372,9 +425,14 @@ void callback(byte command, byte *payload, byte length) {
 
     case MSG_SENDREPLY:
       radio.setPowerLevel((int8_t)(payload[0]));
-      //3 reserved bytes here
       reqID =  payload[1];
-      //2 reserved bytes
+      if (payload[2]) {
+        radio.setNodeID(payload[2]);
+      }
+      else
+      {
+        radio.setNodeID(1);
+      }
 
       //The computer has to tell us what we are replying to, we could have just switched here.
       memcpy(radio.rxIV, payload + 4, 8);
@@ -385,8 +443,13 @@ void callback(byte command, byte *payload, byte length) {
     case MSG_SENDSPECIALREPLY:
       radio.setPowerLevel((int8_t)(payload[0]));
       reqID =  payload[1];
-      //2 reserved bytes
-
+      if (payload[2]) {
+        radio.setNodeID(payload[2]);
+      }
+      else
+      {
+        radio.setNodeID(1);
+      }
       radio.rawSendSG1(payload + 4, length - 4, 0, HEADER_TYPE_REPLY_SPECIAL);
       nfSend(MSG_SENT, &reqID, 1);
       break;
@@ -406,7 +469,7 @@ void callback(byte command, byte *payload, byte length) {
     case MSG_CFG:
 
       radio.setProfile(payload[0]);
-      radio.setChannelNumber(((uint16_t *)(payload + 1))[0]);
+      radio.setChannelNumber(radio.readUInt16(payload + 1));
       radio.setPowerLevel((int8_t)(payload[3]));
       break;
 
@@ -424,6 +487,13 @@ void callback(byte command, byte *payload, byte length) {
 
     case MSG_SENDRT:
       radio.setPowerLevel((int8_t)(payload[0]));
+      if (payload[1]) {
+        radio.setNodeID(payload[1]);
+      }
+      else
+      {
+        radio.setNodeID(1);
+      }
       //3 reserved bytes here
       radio.sendSG1RT(payload + 4, length - 4);
       nfSend(MSG_SENT, 0, 0);
@@ -481,6 +551,7 @@ void loop()
 
   if (millis() - lastSentVersion > 1000)
   {
+    debug("sv");
     lastSentVersion = millis();
     smallBuf[0] = 'S';
     smallBuf[1] = 'G';
@@ -490,7 +561,7 @@ void loop()
 
     smallBuf[0] = radio.readRSSI();
     nfSend(MSG_BGNOISE, smallBuf, 1);
-
+    debug("done");
 
   }
   // RECEIVING
@@ -500,6 +571,7 @@ void loop()
   {
     if (radio.receiveDone()) // Got one!
     {
+      debug("RF");
       //Enable decoding again
       alreadyDecoded = 0;
 
@@ -516,8 +588,10 @@ void loop()
 
       if (radio.decodeSG1Header())
       {
-        ((uint32_t *)(smallBuf + 4))[0] = radio.readHintSequence();
+        radio.writeUInt32(smallBuf + 4,radio.readHintSequence());
       }
+      debug("HDR");
+      
 
 
 
@@ -525,12 +599,14 @@ void loop()
       //Reciever has to check bothe to see if they make sense
 
       nfSend(MSG_NEWDATA, smallBuf, 7);
+      debug("nfs");
 
 
       //RF needs to be physically listening, but we don't actually
       //do anything with that data until we're done handling the current packet
 
       radio._receiveDone();
+      debug("RD");
 
     }
   }

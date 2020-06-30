@@ -301,10 +301,7 @@ class RFM69{
 
     uint8_t nodeID;
 
-    void setNodeID(uint8_t x)
-    {
-      nodeID=x;
-    };
+    void setNodeID(uint8_t x);
 
   
 
@@ -551,9 +548,9 @@ void urandom(uint8_t * target, uint8_t len);
 
 #endif
 
-//#define debug(x) Serial.println((x));Serial.flush()
 //#define REGISTER_DETAIL
 #define debug(x)
+//#define debug(x) Serial.println((x));Serial.flush()
 
 
 //WakeRequests keep track of channels that we want to send wake requests
