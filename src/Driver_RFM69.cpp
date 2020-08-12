@@ -48,6 +48,9 @@ bool RFM69::initialize(uint8_t freqBand)
     _interruptNum = _interruptPin;
 #endif
   this->freqBand=freqBand;
+  
+  // We have to set this here to make sure the REG_OPMODE doesn't ever get out of sync with the real radio
+  _mode =RF69_MODE_STANDBY;
   const uint8_t CONFIG[][2] =
   {
     /* 0x01 */ { REG_OPMODE, RF_OPMODE_SEQUENCER_ON | RF_OPMODE_LISTEN_OFF | RF_OPMODE_STANDBY },
@@ -360,7 +363,7 @@ bool RFM69::waitModeReady()
   {
     //Try to redo the whole radio init process.
     initialize(freqBand);
-    delay(5000);
+    delay(500);
     return 0;
   }
 }

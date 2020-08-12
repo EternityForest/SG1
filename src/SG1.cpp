@@ -503,6 +503,7 @@ void RFM69::sendSG1Reply(const void *buffer, uint8_t bufferSize)
 
 void RFM69::sendSG1RT(const void *buffer, const uint8_t bufferSize)
 {
+  uint8_t tries = 8;
 retry:
 
   defaultChannel.recalcBeaconBytes();
@@ -533,16 +534,23 @@ retry:
   writeReg(REG_PREAMBLELSB, 0x02);
   //Note that we don't even try to send these packets if we can't do so
   //in a reasonable time.
-  for (int i = 0; i < 3; i += 1)
-  {
+
     if (trySend(smallBuffer, bufferSize + 3 + 4 + 4))
     {
       debug("srt");
-      break;
     }
-    delayMicroseconds(xorshift16() & 4095L);
-    goto retry;
-  }
+    else
+    {
+      delayMicroseconds(xorshift16() & 4095L);
+      tries --;
+      if(tries)
+      {
+        goto retry;
+      }
+    }
+    
+
+  
   writeReg(REG_PREAMBLELSB, 0x04);
 }
 
@@ -635,6 +643,7 @@ void RFM69::rawSendSG1(const void *buffer, uint8_t bufferSize,
 
   cipherContext.setKey(defaultChannel.channelKey, 32);
 
+uint8_t tries = 12;
 retry:
   doTimestamp();
 
@@ -741,8 +750,12 @@ retry:
   //Back to the default
   writeReg(REG_PREAMBLELSB, 0x04);
 
+  tries --;
   //Time to try again, we weren't able to send
-  goto retry;
+  if(tries)
+  {
+    goto retry;
+  }
 }
 
 uint8_t rxHeader[8];
