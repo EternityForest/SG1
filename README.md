@@ -108,7 +108,7 @@ and we don't want to miss packets due to false replay detection.
 The Kaithem gateway software performs host side checking to compensate for this.
 
 ### radio.receiveDone()
-If we are recieving, return true and go to standby  got a packet. If not, start recieving.
+If we have a buffered message, return True. If we are recieving, return true and go to standby. If not, start recieving.
 
 ### uint8_t radio.decodeSG1()
 Call after getting a packet. Returns 1 if message was a real SG1 encoded message on our channel key, and decodes the actual payload into DATA and DATALEN.
@@ -123,6 +123,8 @@ In the case of beacons, the data will always be 0.
 Note that there are several cases in which this will automatically send replies.
 It will reply to any short beacon frames with a beacon or wake mesaage.
 
+Note that as a side effect, sending may overrwite whatever is currently in radio.DATA, because we listen for new messages while waiting to send.
+Copy any data you want to keep before sending anything.
 
 ### radio.sendSG1RT(buffer, len)
 Sends an SG1RT packet. These have only 128 bits of overhead, but do not include forward error correction.  
@@ -138,8 +140,9 @@ no easy way to even detect that an RT packet is being sent to you,
 unless you have both the key and synchronized clocks.
 
 
-
 Because of the optimization for very low overhead, it is theoretically possible to mis-decode these packets even with perfect signal strength, if the clocks are not aligned, although the rolling code makes this highly unlikely.
+
+Note that as a side effect, sending may overrwite whatever is currently in radio.DATA, because we listen for new messages while waiting to send.
 
 
 ### radio.decodeSG1RT()
@@ -148,6 +151,11 @@ and leaves data unchanged if it is not a low overhead message for this channel.
 
 This happens very fast, so you can try decoding a packet as both(And you usually have to, because RT packets don't work without perioding full packets to stay in
 sync, unless you disable replay attack protection.)
+
+Note that as a side effect, sending may overrwite whatever is currently in radio.DATA, because we listen for new messages while waiting to send.
+
+Copy any data you want to keep before sending anything.
+
 
 
 ### int32_t radio.getFEI()
@@ -161,40 +169,19 @@ The data, length, and RSSI of the recieved packet, if any. If you called decodeS
 ### radio.send(uint8_t * data, uint8_t len)
 Send a raw message. No additional framing at all gets added here. Length is the length of the data, and does not include the buffer itself.
 
+Note that as a side effect, sending may overrwite whatever is currently in radio.DATA, because we listen for new messages while waiting to send.
+
+
 ### radio.sendSG1(uint8_t * data, uint8_t len)
 Send an SG1 message, giving you (unproven)encryption, TX power control, and automat FEC as needed. Works exactly like send, you just
 have to decode first. Adds 25 bytes to every message, and doubles payload size if the signal is very weak(Due to the error correction used to increase range).
 
 Note that up to 2 extra padding bytes may be added if the system decides Golay encoding is needed.
 
-## NOTE: For now, Request/Reply is not recommended due to lack of gateway support!!
-
-### radio.sendSG1Reply(uint8_t * data, uint8_t len)
-
-Same as sendSG1, but sends as a reply to the last message recieved. You can reply to anything, except a reply, but it is not guaranteed to work if you reply to things
-other than requests.
-
-This is because messages may have not more than one reply, and the system will occasionally send automatic replies to unreliable packets to correct timing errors.
-
-The system will not do this for request messages, as it knows that the application
-will be sending them.
-
-### radio.sendSG1Request(uint8_t * data, uint8_t len)
-
-Same as sendSG1, but marks as requesting a reply. There is no automatic replies or retransmission, because we want to avoid wasting bandwidth on messages that are only acknowledgements, so we let you do your own replies, and include useful data in them.
+Note that as a side effect, sending may overrwite whatever is currently in radio.DATA, because we listen for new messages while waiting to send.
 
 
-
-### radio.isReply(), radio.isRequest()
-
-Call after decoding to learn what kind of message this is.
-
-Note that replies will only ever be to the most recent non-reply you have sent,
-so if you get a reply, you know what it is.
-
-### radio.receivedReply()
-Returns true if the most recent non-reply you sent has beed replied to. You can safely send a reply while listening for one, but you can only be listening for a reply to one packet at a time.
-
+## NOTE: User level Request/Reply has been removed!
 
 
 ### radio.sleep()
@@ -313,3 +300,54 @@ If trust is supplied, you should explicitly indicate how trusted the time source
 Current system timestamp, either a positive real time, or negative random network time not referenced to an epoch. Set adj to something nonzero to add or remove time from it.  
 
 This timestamp can change at any time, including going backwards, as it is synced with SG1.
+
+
+
+## Structured Message API
+
+SG1 defines an application layer and provides tools to encode and decode.  Structured messages are limited to 12 bytes each and contain
+a set of records, each of which has a 2 byte header and may be 1,2, 4, or 8 bytes long.
+
+Structured messages also have a six bit "channel" used to identify different readings of the same type, like multiple analog inputs.
+
+
+### static radio.newStructuredMessage()
+Resets the structured message transmit buffer. The structured message TX and RX buffers are separate from radio.DATA, it is safe to send and recieve messages
+without fear of affecting the structured buffers.
+
+### uint8_t * static radio.getStructuredRecord()
+
+If there are any records remaining in the current recieved structured message, return one and advance the pointer, otherwise,
+return null.  The current structured message is stored in a separate buffer and only updated when recieveing structured messages via decodeSG1().
+
+Therefore, we can safely transmit things in the middle of processing structured data, out buffer will not be overwritten like DATA can be.
+
+Certain commands may have built-in actions.
+
+### static uint8_t radio.getMessageChannel(msg)
+Given a pointer to a structured message, return it's channel number
+
+### static uint8_t * radio.getMessageData(msg)
+Given a pointer to a structured message, return it's data field.
+
+### static uint8_t radio.getMessageLen(msg)
+Given a pointer to a structured message, return it's length.
+
+### static uint8_t radio.getMessageType(msg)
+Given a pointer to a structured message, return it's type.
+
+### static float radio.getMessageFloat(msg)
+Given a pointer to a structured message, if the message if 4 bytes, interpret it as a float
+
+
+### static radio.writeStructuredRecord(uint8_t type, void * data, uint8_t len, uint8_t channel=0)
+
+Write a new structured record to the TX buffer.  If it would overflow, the current contents are sent as a full SG1 packet.
+
+
+### static radio.writeTroubleCode(uint32_t code, uint8_t flags=TROUBLE_WARNING)
+Set the current most recent trouble code, add a MESSAGE_TROUBLE, and immediately flush.
+
+### uint32_t radio.troubleCode
+The most recent trouble code.  Use TROUBLE_CODE_MASK to get the actual code without the flags.
+

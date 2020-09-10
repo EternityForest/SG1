@@ -178,15 +178,17 @@ uint8_t tmp[129];
 #define MSG_DECODEDBEACON 18
 #define MSG_LATENCYTEST 19
 #define MSG_BGNOISE 20
-#define MSG_SENDREQUEST 21
-#define MSG_SENDREPLY 22
+//#define MSG_SENDREQUEST 21
+//#define MSG_SENDREPLY 22
 #define MSG_DECODEDSPECIAL 23
 #define MSG_SENDSPECIALREQUEST 24
 #define MSG_SENDSPECIAL 25
 #define MSG_SENDSPECIALREPLY 26
-#define MSG_DECODEDREPLY 27
+//#define MSG_DECODEDREPLY 27
 #define MSG_DECODEDSPECIALREPLY 28
 
+#define MSG_DECODEDSTRUCTURED 29
+#define MSG_SEND_STRUCTURED 30
 
 
 bool listening = 0;
@@ -254,7 +256,7 @@ void callback(byte command, byte *payload, byte length) {
 
         uint8_t result = radio.decodeSG1();
 
-        if (result == 1 || radio.gotSpecialPacket)
+        if ((result == 1) || radio.gotSpecialPacket)
         {
           bool rp = radio.isReply();
 
@@ -268,17 +270,17 @@ void callback(byte command, byte *payload, byte length) {
             {
               SERWRITE(MSG_DECODEDSPECIALREPLY);
             }
-            else
-            {
-              SERWRITE(MSG_DECODEDREPLY);
-            }
           }
           else
           {
             SERWRITE(1 + 1 + 1 + 8 + 4 + 32 + radio.DATALEN);
-            if (radio.gotSpecialPacket)
+            if (radio.gotSpecialPacket==1)
             {
               SERWRITE(MSG_DECODEDSPECIAL);
+            }
+            if (radio.gotSpecialPacket==2)
+            {
+              SERWRITE(MSG_DECODEDSTRUCTURED);
             }
             else
             {
@@ -357,6 +359,33 @@ void callback(byte command, byte *payload, byte length) {
       SERWRITE(43);
       break;
 
+
+    case MSG_SEND_STRUCTURED:
+      debug(payload[4]);
+      radio.setPowerLevel((int8_t)(payload[0]));
+      reqID =  payload[1];
+
+      if (payload[2]) {
+        radio.setNodeID(payload[2]);
+      }
+      else
+      {
+        radio.setNodeID(1);
+      }
+      //1 reserved bytes      
+      radio.rawSendSG1(payload + 4, length - 4, 0, HEADER_TYPE_STRUCTURED);
+
+      SERWRITE(42);
+      SERWRITE(1 + 1 + 8);
+      SERWRITE(MSG_SENT);
+      // We can save and restore the IV we are waiting for this way.
+      SERWRITE(reqID);
+      SERWRITEN(radio.awaitReplyToIv, 8);
+      SERWRITE(43);
+      break;
+
+
+
     case MSG_SENDSPECIALREQUEST:
       radio.setPowerLevel((int8_t)(payload[0]));
       reqID =  payload[1];
@@ -401,44 +430,6 @@ void callback(byte command, byte *payload, byte length) {
       break;
 
 
-    case MSG_SENDREQUEST:
-      radio.setPowerLevel((int8_t)(payload[0]));
-      reqID =  payload[1];
-      if (payload[2]) {
-        radio.setNodeID(payload[2]);
-      }
-      else
-      {
-        radio.setNodeID(1);
-      }
-      //1 reserved bytes
-
-      radio.sendSG1Request(payload + 4, length - 4);
-      SERWRITE(42);
-      SERWRITE(1 + 1 + 8);
-      SERWRITE(MSG_SENT);
-      // We can save and restore the IV we are waiting for this way.
-      SERWRITE(reqID);
-      SERWRITEN(radio.awaitReplyToIv, 8);
-      SERWRITE(43);
-      break;
-
-    case MSG_SENDREPLY:
-      radio.setPowerLevel((int8_t)(payload[0]));
-      reqID =  payload[1];
-      if (payload[2]) {
-        radio.setNodeID(payload[2]);
-      }
-      else
-      {
-        radio.setNodeID(1);
-      }
-
-      //The computer has to tell us what we are replying to, we could have just switched here.
-      memcpy(radio.rxIV, payload + 4, 8);
-      radio.sendSG1Reply(payload + 4 + 8, length - (4 + 8));
-      nfSend(MSG_SENT, &reqID, 1);
-      break;
 
     case MSG_SENDSPECIALREPLY:
       radio.setPowerLevel((int8_t)(payload[0]));

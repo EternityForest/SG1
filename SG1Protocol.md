@@ -28,18 +28,19 @@ True if the sender's time has been set from a trusted source
 True if time is "accurate" by whatever definition the channel uses
 
 
-##### 4-7: PACKET_TYPE
-Reply messages have bit 7 set.
+##### 4-6: PACKET_TYPE
+*Note* In early versions, the type was a bit field, and user level request/reply existed.  This is no longer the case, and request reply
+only exists behind the scenes.  Compatibility has not been broken with any devices that did not use this feature.
 
-//No reply is asked for
-#define HEADER_TYPE_UNRELIABLE    0b0010000
-//Reply requested
-#define HEADER_TYPE_RELIABLE      0b0100000
-//This is a reply
-#define HEADER_TYPE_REPLY         0b1000000
-//This is a "special" type with reserved system meaning
-#define HEADER_TYPE_REPLY_SPECIAL 0b1010000
+#define HEADER_TYPE_FIELD            0b01110000
 
+#define HEADER_TYPE_SPECIAL          0b00000000
+#define HEADER_TYPE_UNRELIABLE       0b00010000
+#define HEADER_TYPE_REPLY_SPECIAL    0b01010000
+#define HEADER_TYPE_RELIABLE_SPECIAL 0b00110000
+
+
+#define HEADER_TYPE_STRUCTURED       0b01100000
 
 #### Status(1 byte)
 *NOTE: The 2 high order bits of this byte are always masked off and ignored 
@@ -80,7 +81,7 @@ After masking off the top 4 high order bits in each, the first 3 are the private
 ### Payload(Not present in Beacon messages)
 ChaCha20 encrypted using the channel key. The IV is the IV of the message.
 
-The associated data is the 3 bytes of header after FEC decoding, followed by the IV of the message we are responding to, if this is a reply or special reply.
+The associated data is the 3 bytes of header after FEC decoding, followed by the IV of the message we are responding to, if this is a SPECIAL_REPLY.
 
 
 
@@ -99,7 +100,7 @@ repeat for over 2000 years.
 If a SPECIAL_REPLY packet is empty, it exists entirely to set the clock
 on the other device.
 
-In generaal, special packets should not be passed to user code.
+In general, special packets should not be passed to user code.
 
 The first byte of the special packet is always a packet type, if present.
 
@@ -150,7 +151,7 @@ In this case, all automatic setting of the system clock must also be disabled, a
 
 ## Initial Time Sync
 
-High powered always-on devices should always send a reply to any message with a time that is very inaccurate.
+High powered always-on devices should always send a SPECIAL_REPLY to any message with a time that is very inaccurate.
 
 This is the least secure part of the whole setup, because we are temporarily running
 in random-clock mode till the master gives us a timestamp.
@@ -180,21 +181,6 @@ Upon recieving this, the device must immediately set it's connection parameters 
 
 Because pairing operates on a public channel where clocks may not be synced,
 all pairing must be performed with replay attack protection disabled.
-
-
-## Device info packets
-
-These are special packets that provide information about a device. The first 
-16 bytes must be a UUID representing the device, like a serial number.
-
-The next 16 must be a UUID reprenting the model number.
-
-The following 16 bust represent the device class of the device.
-
-The remainder may be up to 24 UTF8 characters with no null terminator, representing
-a friendly name for the device.
-
-These packets should be rarely, if ever sent at any time other than initial setup.
 
 
 

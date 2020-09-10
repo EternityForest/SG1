@@ -94,7 +94,6 @@ void loop()
   //                SPI_ON, USART0_ON, TWI_OFF);
 
 
-  //Ever 3 seconds, send a request message. Also send every 100 milliseconds if we haven't got a reply yet
   if ( ((millis() - last) > 3000))
   {
 
@@ -112,42 +111,24 @@ void loop()
     Serial.println("Path Loss:");
     Serial.println(radio.rxPathLoss);
 
-    radio.sendSG1Request((uint8_t *)pl, strlen(pl));
     Serial.print("Sent, TX pwr:");
     Serial.print(radio.getAutoTxPower());
     Serial.println("\n\n\n");
     
     last = millis();
+
+    radio.sendSG1(pl,strlen(pl));
+    radio.sendSG1RT(pl2,strlen(pl2));
+
+
+    // SG1 defines an application layer called structured messages,
+    //they are made of structured records.  The packet type field is different so they will never
+    //interfere with raw message applications.
+
+    //Packet types below 192 are reserved for standardization
+    radio.writeStructuredRecord(192, "TEST",4);
+    radio.flushStructuredMessage();
   }
-
-
-  //If we have not gotten a reply, we are going to
-  //Retry
-  else if (!radio.receivedReply())
-  {
-    //Allow 500ms, serial printing is slowing everything down
-    if ((millis() - last) > 500)
-    {
-      //Limit 10 attempts to resend
-      if (attempts)
-      {
-        attempts -= 1;
-        //radio.send((uint8_t *)pl, strlen(pl));
-        radio.sendSG1Request((uint8_t *)pl, strlen(pl));
-       
-        Serial.println("Retry");
-        Serial.print(millis()-last);
-           last = millis();
-      }
-    }
-  }
-
-  // now we are "connected" so we can reset the counter and enable retries
-  if (radio.receivedReply())
-  {
-    attempts = 10;
-  }
-
 
 
 
@@ -195,17 +176,29 @@ void loop()
 
       Serial.println("]");
 
-      if (radio.isRequest())
-      {
-        //Send an empty message in response.
-        radio.sendSG1Reply(0, 0);
-        Serial.println("Sent reply");
-      }
-
-      if(radio.isReply())
-      {
-        Serial.println("Got reply");
-      }
     }
+
+    
+    //After decoding, any structured records are available.
+    //Structured messages have a different packet type, so decodeSG1 returns False,
+    //so we have to check separately.
+    uint8_t * sr;
+    while (sr = radio.getStructuredRecord())
+    {
+      Serial.print("Incoming Record type: ");
+      Serial.println(getRecordType(sr));
+      Serial.print(" Channel: ");
+
+      Serial.print(getRecordChannel(sr));
+      Serial.print(" Len: ");
+
+      Serial.println(getRecordLen(sr));
+      Serial.write(getRecordData(sr),getRecordLen(sr));
+      
+      Serial.println("");
+        
+    }
+
+    
   }
 }

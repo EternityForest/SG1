@@ -29,20 +29,46 @@
 #include <SPI.h>
 
 
-//This bit indicates if the packet is a reply
-#define HEADER_TYPE_FIELD 0b1110000
 
-//Same as normal unreliable messages.
-#define HEADER_TYPE_SPECIAL 0b0000000
 
-#define HEADER_TYPE_UNRELIABLE 0b0010000
-#define HEADER_TYPE_RELIABLE 0b0100000
-//Any reply types will always have bit 6 set
-#define HEADER_TYPE_REPLY 0b1000000
-#define HEADER_TYPE_REPLY_SPECIAL 0b1010000
 
+
+#define MESSAGE_NULL 0
+#define MESSAGE_GET_INFO 1
+#define MESSAGE_INFO_PROFILE 2
+
+
+#define MESSAGE_SET_TROUBLE 3
+#define MESSAGE_GET_TROUBLE 4
+#define MESSAGE_TROUBLE  5
+#define MESSAGE_SET_CONFIG 6 
+#define MESSAGE_GET_CONFIG 7
+#define MESSAGE_CONFIG 8
+#define MESSAGE_POSIXTZ 9
+
+#define TROUBLE_INFO  0b00000000
+#define TROUBLE_ERROR 0b00000010
+#define TROUBLE_WARN  0b00000100
+#define TROUBLE_CRITICAL 0b00000110
+
+#define TROUBLE_ACTIVE  0b00000000
+#define TROUBLE_CLEARED 0b00000001
+
+
+//Breaking change: User level request/reply is now gone, as this seems to really be an application level concern.
+//However, compatibility has not been brokem with anything that does not use this feature.
+#define HEADER_TYPE_FIELD            0b1110000
+
+#define HEADER_TYPE_SPECIAL          0b0000000
+#define HEADER_TYPE_UNRELIABLE       0b0010000
+#define HEADER_TYPE_REPLY_SPECIAL    0b1010000
 #define HEADER_TYPE_RELIABLE_SPECIAL 0b0110000
 
+
+//This special structured type is just a regular message,
+//but with structured formatting.
+#define HEADER_TYPE_STRUCTURED       0b1000000
+ 
 //Levels of time trust. OR the trust attributes together to get a trust level
 #define TIMETRUST_ACCURATE 1
 #define TIMETRUST_CLAIM_TRUST 2
@@ -204,6 +230,11 @@
 #define NODEID_HANDHELD 5
 #define NODEID_ROBOT 6
 
+#define getRecordType(r) ((r)[0])
+#define getRecordLen(r) (1<< ((r)[1]&& 0b11))
+#define getRecordChannel(r)  ((r)[1]>>2)
+
+#define getRecordData(r) ((r)+2)
 
 class SG1Channel
 {
@@ -303,6 +334,37 @@ class RFM69{
 
     void setNodeID(uint8_t x);
 
+
+    uint8_t rxStructuredMessagePointer = 255;
+    uint8_t rxStructuredMessageLen = 0;
+    uint8_t txStructuredMessagePointer = 255;
+
+    uint8_t txStructuredMessageBuffer[12];
+    uint8_t rxStructuredMessageBuffer[12];
+
+    void newStructuredMessage();
+    void writeStructuredRecord(uint8_t type, void * data, uint8_t len,uint8_t channel=0);
+    void flushStructuredMessage();
+    uint8_t * getStructuredRecord();
+   
+
+    uint32_t troubleCode=0;
+    
+
+
+    uint8_t * configData=0;
+    uint8_t configDataSize=0;
+    uint8_t configDataEEPROM=0;
+
+
+    void useConfigData(uint8_t eepromAddr, uint8_t dataSize);
+    void saveConfigData();
+
+
+    //Sets the most recent trouble code, and adds it to the buffered structured message
+    void writeTroubleCode(uint32_t code, uint8_t flags=TROUBLE_WARN | TROUBLE_ACTIVE, uint8_t data=0);
+
+
   
 
     //Cached interval number for the privateHintSequence cache
@@ -357,6 +419,8 @@ class RFM69{
     void doBeacon();
     bool canSend();
 
+    
+
 
   
 
@@ -374,9 +438,6 @@ class RFM69{
     virtual void rawSendSG1(const void* buffer, uint8_t bufferSize, uint8_t * useChallenge,
     uint8_t packetType);
 
-    virtual void sendSG1Reply(const void* buffer, uint8_t bufferSize);
-    virtual void sendSG1Request(const void* buffer, uint8_t bufferSize);
-    
     virtual bool receiveDone();
    
     uint32_t getFrequency();
@@ -411,6 +472,7 @@ class RFM69{
     unsigned long lastSG1Presence=0;
 
     int8_t maxTxPower = -4;
+
 
 
     //This is the last SG1 packet that we were able to validate
@@ -458,6 +520,7 @@ class RFM69{
 
   bool isSpecialType();
 
+  bool isStructured();
 
   protected:
 
