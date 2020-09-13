@@ -41,10 +41,15 @@
 #define MESSAGE_SET_TROUBLE 3
 #define MESSAGE_GET_TROUBLE 4
 #define MESSAGE_TROUBLE  5
-#define MESSAGE_SET_CONFIG 6 
-#define MESSAGE_GET_CONFIG 7
-#define MESSAGE_CONFIG 8
-#define MESSAGE_POSIXTZ 9
+
+#define RECORD_CONFIG_SET 6 
+#define RECORD_CONFIG_GET 7
+#define RECORD_CONFIG_SAVE 8
+#define RECORD_CONFIG_DECLARE 9
+
+#define MESSAGE_POSIXTZ 10
+
+
 
 #define TROUBLE_INFO  0b00000000
 #define TROUBLE_ERROR 0b00000010
@@ -346,6 +351,9 @@ class RFM69{
     void writeStructuredRecord(uint8_t type, void * data, uint8_t len,uint8_t channel=0);
     void flushStructuredMessage();
     uint8_t * getStructuredRecord();
+
+    void declareConfigPage(uint8_t page);
+
    
 
     uint32_t troubleCode=0;
@@ -516,7 +524,7 @@ class RFM69{
 
   //Used internally by the system to track if we got a special message
   //Also used by the gateway, so we can detect special packets
-  bool gotSpecialPacket=0;
+  uint8_t gotSpecialPacket=0;
 
   bool isSpecialType();
 
@@ -613,7 +621,7 @@ void urandom(uint8_t * target, uint8_t len);
 
 //#define REGISTER_DETAIL
 #define debug(x)
-//#define debug(x) Serial.println((x));Serial.flush()
+#define debug(x) Serial.println((x));Serial.flush()
 
 
 //WakeRequests keep track of channels that we want to send wake requests

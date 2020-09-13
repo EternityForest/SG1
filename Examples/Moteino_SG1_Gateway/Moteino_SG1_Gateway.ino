@@ -178,14 +178,8 @@ uint8_t tmp[129];
 #define MSG_DECODEDBEACON 18
 #define MSG_LATENCYTEST 19
 #define MSG_BGNOISE 20
-//#define MSG_SENDREQUEST 21
-//#define MSG_SENDREPLY 22
-#define MSG_DECODEDSPECIAL 23
-#define MSG_SENDSPECIALREQUEST 24
+
 #define MSG_SENDSPECIAL 25
-#define MSG_SENDSPECIALREPLY 26
-//#define MSG_DECODEDREPLY 27
-#define MSG_DECODEDSPECIALREPLY 28
 
 #define MSG_DECODEDSTRUCTURED 29
 #define MSG_SEND_STRUCTURED 30
@@ -256,28 +250,20 @@ void callback(byte command, byte *payload, byte length) {
 
         uint8_t result = radio.decodeSG1();
 
-        if ((result == 1) || radio.gotSpecialPacket)
+        if ((result == 1) || (radio.gotSpecialPacket==2))
         {
           bool rp = radio.isReply();
 
           alreadyDecoded = 1;
-          SERWRITE(42);
           if (rp)
           {
-            //Extra 8 bytes, we're gonna tell them who this is a reply to
-            SERWRITE(1 + 1 + 1 + 8 + 4 + 32 + 8 + radio.DATALEN);
-            if (radio.gotSpecialPacket)
-            {
-              SERWRITE(MSG_DECODEDSPECIALREPLY);
-            }
           }
           else
           {
+            SERWRITE(42);
+
             SERWRITE(1 + 1 + 1 + 8 + 4 + 32 + radio.DATALEN);
-            if (radio.gotSpecialPacket==1)
-            {
-              SERWRITE(MSG_DECODEDSPECIAL);
-            }
+            
             if (radio.gotSpecialPacket==2)
             {
               SERWRITE(MSG_DECODEDSTRUCTURED);
@@ -286,28 +272,25 @@ void callback(byte command, byte *payload, byte length) {
             {
               SERWRITE(MSG_DECODED);
             }
+            
+            SERWRITE(radio.rxPathLoss);
+            SERWRITE(radio.RSSI);
+            SERWRITEN(radio.rxIV, 8);
+  
+  
+            SERWRITE(radio.rxHeader[1]);
+            SERWRITE(radio.rxHeader[2]);
+            // Reserved padding bytes.
+            SERWRITE(0);
+            SERWRITE(0);
+  
+  
+            SERWRITEN(radio.defaultChannel.channelKey, 32);
+  
+          
+            SERWRITEN(radio.DATA, (radio.DATALEN));
+            SERWRITE(43);
           }
-          SERWRITE(radio.rxPathLoss);
-          SERWRITE(radio.RSSI);
-          SERWRITEN(radio.rxIV, 8);
-
-
-          SERWRITE(radio.rxHeader[1]);
-          SERWRITE(radio.rxHeader[2]);
-          // Reserved padding bytes.
-          SERWRITE(0);
-          SERWRITE(0);
-
-
-          SERWRITEN(radio.defaultChannel.channelKey, 32);
-
-          //Send the challenge that was used to decode the reply
-          if (rp)
-          {
-            SERWRITEN(radio.awaitReplyToIv, 8);
-          }
-          SERWRITEN(radio.DATA, (radio.DATALEN));
-          SERWRITE(43);
         }
         //Handle beacons separately.
         else if (result == 2)
@@ -385,28 +368,6 @@ void callback(byte command, byte *payload, byte length) {
       break;
 
 
-
-    case MSG_SENDSPECIALREQUEST:
-      radio.setPowerLevel((int8_t)(payload[0]));
-      reqID =  payload[1];
-      if (payload[2]) {
-        radio.setNodeID(payload[2]);
-      }
-      else
-      {
-        radio.setNodeID(1);
-      }
-      //1 reserved bytes
-      radio.rawSendSG1(payload + 4, length - 4, 0, HEADER_TYPE_RELIABLE_SPECIAL);
-      SERWRITE(42);
-      SERWRITE(1 + 1 + 8);
-      SERWRITE(MSG_SENT);
-      // We can save and restore the IV we are waiting for this way.
-      SERWRITE(reqID);
-      SERWRITEN(radio.awaitReplyToIv, 8);
-      SERWRITE(43);
-      break;
-
     case MSG_SENDSPECIAL:
       radio.setPowerLevel((int8_t)(payload[0]));
       reqID =  payload[1];
@@ -429,21 +390,6 @@ void callback(byte command, byte *payload, byte length) {
       SERWRITE(43);
       break;
 
-
-
-    case MSG_SENDSPECIALREPLY:
-      radio.setPowerLevel((int8_t)(payload[0]));
-      reqID =  payload[1];
-      if (payload[2]) {
-        radio.setNodeID(payload[2]);
-      }
-      else
-      {
-        radio.setNodeID(1);
-      }
-      radio.rawSendSG1(payload + 4, length - 4, 0, HEADER_TYPE_REPLY_SPECIAL);
-      nfSend(MSG_SENT, &reqID, 1);
-      break;
 
     case MSG_RX:
       listening = 1;

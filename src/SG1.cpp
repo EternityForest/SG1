@@ -1652,7 +1652,6 @@ uint8_t RFM69::decodeSG1()
       gotSpecialPacket=2;
       memcpy(rxStructuredMessageBuffer,DATA,DATALEN);
       rxStructuredMessageLen=DATALEN;
-      rxStructuredMessagePointer = 0;
       return 0;
     }
     return 1;
@@ -2273,7 +2272,15 @@ void RFM69::getEntropy(uint8_t changes)
 bool RFM69::receivedReply()
 {
   //We zero it out when we got a reply, so we can use this to check
-  return memcmp(awaitReplyToIv, 0, 8)==0;
+
+  for(uint8_t i=0;i<8;i++)
+  {
+    if(awaitReplyToIv[i]>0)
+    {
+      return 0;
+    }
+  }
+  return 1;
 }
 
 bool RFM69::isReply()
@@ -2390,13 +2397,64 @@ uint8_t *RFM69::getStructuredRecord()
 
   uint8_t *p = rxStructuredMessageBuffer + rxStructuredMessagePointer;
 
-  char l = *(rxStructuredMessageBuffer + rxStructuredMessagePointer + 1);
+  uint8_t l = *(rxStructuredMessageBuffer + rxStructuredMessagePointer + 1);
   l &= 0b00000011;
   l = 1 << l;
 
   //Skip the data plus the 2 byte header.
   rxStructuredMessagePointer += l + 2;
+
+  debug("GSR");
+   //Handling config messages
+  if(configDataSize)
+  {
+    uint8_t c = p[1]&0b11111100;
+    uint8_t cdp=0;
+
+    //Channel number is page number, times 8 for 8 byte pages
+    cdp = (c)<<3;
+
+    if(p[0]==RECORD_CONFIG_SET)
+    {
+      for(uint8_t j=0;j<l;j++)
+      {
+        if(cdp<configDataSize)
+        {
+          //plus two skips over header
+          configData[cdp]=p[2+j];
+        }
+      }
+      //Use the out of order bit flag so we don't have to send the whole thing
+      declareConfigPage(c+32);
+    }
+    if(p[0]==RECORD_CONFIG_GET)
+    {
+      for(uint8_t j=0;j<32;j++){
+
+        declareConfigPage(j);
+      }
+    }
+
+    if(p[0]==RECORD_CONFIG_SAVE)
+    {
+      if(c==0)
+      {
+        saveConfigData();
+
+        writeStructuredRecord(RECORD_CONFIG_SAVE,globalScratchpad,1,1);
+      }
+    }
+  }
   return p;
+}
+
+void RFM69::declareConfigPage(uint8_t page){
+  //Get rid of the bits aboove bit 4 for rhe data lookup, because we use range 32-63 to indicate that we are only sending one specific page out of order.
+  uint8_t d=((page&0b11111)<<3);
+  if(d<configDataSize)
+  {
+    writeStructuredRecord(RECORD_CONFIG_DECLARE,configData+d, 8,page);
+  }
 }
 
 void RFM69::flushStructuredMessage()

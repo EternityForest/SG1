@@ -77,6 +77,13 @@ void setup()
 
   //RNG demo
   Serial.println(radio.urandomRange(1, 100));
+
+  //Enable the config data feature, 16 bytes, add eeprom 0.
+  //Nothing is actually saved to eeprom without an explicit command
+  radio.useConfigData(128, 16);
+
+  //Set a config value in RAM
+  radio.configData[1]=50;
 }
 
 unsigned long last = 0;
@@ -128,6 +135,10 @@ void loop()
     //Packet types below 192 are reserved for standardization
     radio.writeStructuredRecord(192, "TEST",4);
     radio.flushStructuredMessage();
+
+      Serial.println("Config byte 0 is");
+    Serial.println(radio.configData[0]);
+    
   }
 
 
@@ -199,6 +210,10 @@ void loop()
         
     }
 
-    
+    //Flush any system traffic that was queued during the recieving of those messages.
+    radio.flushStructuredMessage();
   }
+  
+  
+  
 }
