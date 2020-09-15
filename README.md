@@ -350,17 +350,7 @@ Write a new structured record to the TX buffer.  If it would overflow, the curre
 
 
 ### radio.flushStructuredMessage()
-
 Flush TX buffer.
-
-###  radio.writeTroubleCode(uint32_t code, uint8_t flags=TROUBLE_WARNING)
-Set the current most recent trouble code, add a MESSAGE_TROUBLE, and immediately flush.
-
-### uint32_t radio.troubleCode
-The most recent trouble code.  Use TROUBLE_CODE_MASK to get the actual code without the flags.
-
-
-
 
 
 
@@ -374,10 +364,21 @@ Note that config data is only designed to work with two devices per SG1 channel 
 
 The canonical representation of confiig data is to be space-separated groups of 16 hex chars, 4 per line.
 
+See the structured records documentation for more info on this.
+
+Note: the EEPROM start addr is a single byte only.  Also note that it will use exactly `size` bytes, since there is no padding, checksums, or anything.
+
+A device should not, under any circumstances, use the config data in such a way that would cause you to not be able to recover if you enter the wrong data.
+
+
+
 ### radio.saveConfigData()
 
 Save the active config data as the default in EEPROM, to the configured address. This can also be done via a remote command.  To avoid EEPROM wear this command always checks to see if a write is actually
 needed.
+
+Note:  This queues up a structured record indicating the data has been saved. The rationale is that te same function is used for remote save commands, and we need a way
+to acknowledge, but also, it allows hosts to keep tabs on anything that may be writing to flash more than the user expects.
 
 
 ### radio.configData

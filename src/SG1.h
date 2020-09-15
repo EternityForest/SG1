@@ -38,9 +38,6 @@
 #define MESSAGE_INFO_PROFILE 2
 
 
-#define MESSAGE_SET_TROUBLE 3
-#define MESSAGE_GET_TROUBLE 4
-#define MESSAGE_TROUBLE  5
 
 #define RECORD_CONFIG_SET 6 
 #define RECORD_CONFIG_GET 7
@@ -51,13 +48,6 @@
 
 
 
-#define TROUBLE_INFO  0b00000000
-#define TROUBLE_ERROR 0b00000010
-#define TROUBLE_WARN  0b00000100
-#define TROUBLE_CRITICAL 0b00000110
-
-#define TROUBLE_ACTIVE  0b00000000
-#define TROUBLE_CLEARED 0b00000001
 
 
 //Breaking change: User level request/reply is now gone, as this seems to really be an application level concern.
@@ -236,7 +226,7 @@
 #define NODEID_ROBOT 6
 
 #define getRecordType(r) ((r)[0])
-#define getRecordLen(r) (1<< ((r)[1]&& 0b11))
+#define getRecordLen(r) (1<< ((r)[1]& 0b11))
 #define getRecordChannel(r)  ((r)[1]>>2)
 
 #define getRecordData(r) ((r)+2)
@@ -356,7 +346,6 @@ class RFM69{
 
    
 
-    uint32_t troubleCode=0;
     
 
 
@@ -368,9 +357,6 @@ class RFM69{
     void useConfigData(uint8_t eepromAddr, uint8_t dataSize);
     void saveConfigData();
 
-
-    //Sets the most recent trouble code, and adds it to the buffered structured message
-    void writeTroubleCode(uint32_t code, uint8_t flags=TROUBLE_WARN | TROUBLE_ACTIVE, uint8_t data=0);
 
 
   
@@ -621,7 +607,7 @@ void urandom(uint8_t * target, uint8_t len);
 
 //#define REGISTER_DETAIL
 #define debug(x)
-#define debug(x) Serial.println((x));Serial.flush()
+//#define debug(x) Serial.println((x));Serial.flush()
 
 
 //WakeRequests keep track of channels that we want to send wake requests

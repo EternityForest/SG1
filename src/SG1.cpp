@@ -1652,6 +1652,8 @@ uint8_t RFM69::decodeSG1()
       gotSpecialPacket=2;
       memcpy(rxStructuredMessageBuffer,DATA,DATALEN);
       rxStructuredMessageLen=DATALEN;
+      rxStructuredMessagePointer=0;
+      debug("GSM");
       return 0;
     }
     return 1;
@@ -2408,7 +2410,8 @@ uint8_t *RFM69::getStructuredRecord()
    //Handling config messages
   if(configDataSize)
   {
-    uint8_t c = p[1]&0b11111100;
+    //Get the ch number
+    uint8_t c = p[1]>>2;
     uint8_t cdp=0;
 
     //Channel number is page number, times 8 for 8 byte pages
@@ -2421,7 +2424,7 @@ uint8_t *RFM69::getStructuredRecord()
         if(cdp<configDataSize)
         {
           //plus two skips over header
-          configData[cdp]=p[2+j];
+          configData[cdp+j]=p[2+j];
         }
       }
       //Use the out of order bit flag so we don't have to send the whole thing
@@ -2441,7 +2444,6 @@ uint8_t *RFM69::getStructuredRecord()
       {
         saveConfigData();
 
-        writeStructuredRecord(RECORD_CONFIG_SAVE,globalScratchpad,1,1);
       }
     }
   }
@@ -2507,14 +2509,7 @@ void RFM69::writeStructuredRecord(uint8_t type, void *data, uint8_t len, uint8_t
   txStructuredMessagePointer += len;
 }
 
-//Sets the most recent trouble code, and adds it to the buffered structured message
-void RFM69::writeTroubleCode(uint32_t code, uint8_t flags, uint8_t data)
-{
-  uint32_t troubleCode = code;
-  ((uint8_t *)(&troubleCode))[2] = flags;
-  ((uint8_t *)(&troubleCode))[3] = flags;
-  writeStructuredRecord(MESSAGE_TROUBLE, &troubleCode, 4);
-}
+
 
 void RFM69::useConfigData(uint8_t eepromAddr, uint8_t dataSize)
 {
@@ -2540,11 +2535,10 @@ void RFM69::saveConfigData()
 #if defined(E2END) && E2END > 0
   for (int i = 0; i < configDataSize; i++)
   {
-    uint8_t x = EEPROM.read(configDataEEPROM + i);
-    if (x != configData[i])
-    {
-      EEPROM.read(configDataEEPROM + i);
-    }
-#endif
+       EEPROM.update(configDataEEPROM+i, configData[i]);
   }
+    writeStructuredRecord(RECORD_CONFIG_SAVE,globalScratchpad,1,1);
+
+#endif
+  
 }
