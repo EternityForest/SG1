@@ -246,8 +246,8 @@ used to calibrate RSSI. They do not carry any timing information, and due to the
 It is suggested that devices send one periodically if they have no data to send.
 
 
-### radio.xorshift32()
-Simple non-secure 32 bit random number generator used for internal backoff timings. Reseeded automatically, and fast, but not secure.
+### radio.xorshift16()
+Simple non-secure 16 bit random number generator used for internal backoff timings. Reseeded automatically, and fast, but not secure.
 
 ### radio.urandom(uint8_t * target, uint8_t len)
 
